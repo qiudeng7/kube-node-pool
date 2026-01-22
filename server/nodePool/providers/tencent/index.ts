@@ -10,7 +10,7 @@
  * @see https://cloud.tencent.com/document/api/213/15692
  */
 
-import type { INodePool, ServerInfo, CreateServerParams, TemplateInfo, ApiServerStatus } from '../../interface'
+import type { INodePool, ServerInfo, NodeInfo, CreateServerParams, TemplateInfo, ApiServerStatus } from '../../interface'
 import { ServerStatus, ServerRole } from '../../interface'
 import { createRequest } from './signedRequest'
 
@@ -221,11 +221,10 @@ export class TencentNodePool implements INodePool<TencentConfig> {
    * 调用腾讯云 DescribeInstances API 查询指定实例的详细信息。
    *
    * @param instanceId - 实例 ID
-   * @param region - 地域，默认为 ap-guangzhou
    * @returns 服务器信息
    * @throws {Error} 如果实例不存在
    */
-  async getServerStatus(instanceId: string, region: string = 'ap-guangzhou'): Promise<ServerInfo> {
+  async getServerStatus(instanceId: string): Promise<ServerInfo> {
     const request = this.createRequest()
 
     // 调用腾讯云 DescribeInstances API
@@ -240,7 +239,7 @@ export class TencentNodePool implements INodePool<TencentConfig> {
         InstanceIds: [instanceId],
       },
       endpoint: 'cvm.tencentcloudapi.com',
-      region: region,
+      region: this.region,
     })
 
     const instance = result.Response.InstanceSet[0]
@@ -255,7 +254,6 @@ export class TencentNodePool implements INodePool<TencentConfig> {
       ip: instance.PublicIpAddresses?.[0] || '',
       privateIp: instance.PrivateIpAddresses?.[0] || '',
       status: STATUS_MAP[instance.InstanceState] || ServerStatus.PENDING,
-      role: ServerRole.WORKER, // TODO: 从标签或其他地方获取角色
       createdAt: new Date(instance.CreatedTime),
     }
   }
@@ -266,7 +264,7 @@ export class TencentNodePool implements INodePool<TencentConfig> {
    * 调用腾讯云 DescribeInstances API 查询实例列表。
    *
    * @param role - 可选，按角色过滤（当前未实现）
-   * @returns 服务器信息列表
+   * @returns 节点信息列表（包含角色）
    *
    * @remarks
    * TODO: 当前未实现按角色过滤功能
@@ -275,7 +273,6 @@ export class TencentNodePool implements INodePool<TencentConfig> {
    */
   async listServers(_role?: ServerRole): Promise<ServerInfo[]> {
     const request = this.createRequest()
-    const region = 'ap-guangzhou' // TODO: 从配置或 template 获取
 
     // 调用腾讯云 DescribeInstances API
     const result = await request<
@@ -290,17 +287,16 @@ export class TencentNodePool implements INodePool<TencentConfig> {
         Offset: 0,
       },
       endpoint: 'cvm.tencentcloudapi.com',
-      region: region,
+      region: this.region,
     })
 
-    // 转换为统一的 ServerInfo 格式
+    // 转换为统一的 NodeInfo 格式
     return result.Response.InstanceSet.map((instance) => ({
       id: instance.InstanceId,
       name: instance.InstanceName,
       ip: instance.PublicIpAddresses?.[0] || '',
       privateIp: instance.PrivateIpAddresses?.[0] || '',
       status: STATUS_MAP[instance.InstanceState] || ServerStatus.PENDING,
-      role: ServerRole.WORKER, // TODO: 从标签获取角色
       createdAt: new Date(instance.CreatedTime),
     }))
   }
@@ -315,11 +311,9 @@ export class TencentNodePool implements INodePool<TencentConfig> {
    *
    * @remarks
    * 销毁操作是不可逆的，请谨慎操作
-   * TODO: 需要从实例信息中获取 region
    */
   async terminateServer(instanceId: string): Promise<boolean> {
     const request = this.createRequest()
-    const region = 'ap-guangzhou' // TODO: 从实例信息中获取 region
 
     // 调用腾讯云 TerminateInstances API
     await request<
@@ -333,7 +327,7 @@ export class TencentNodePool implements INodePool<TencentConfig> {
         InstanceIds: [instanceId],
       },
       endpoint: 'cvm.tencentcloudapi.com',
-      region: region,
+      region: this.region,
     })
 
     return true

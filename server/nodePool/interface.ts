@@ -27,8 +27,14 @@ export interface ServerInfo {
     ip: string                    // 公网IP
     privateIp: string             // 私网IP
     status: ServerStatus          // 实例状态
-    role: ServerRole              // 角色（控制面/工作节点）
     createdAt: Date               // 创建时间
+}
+
+/**
+ * 节点信息（扩展服务器信息，包含角色）
+ */
+export interface NodeInfo extends ServerInfo {
+    role: ServerRole              // 角色（控制面/工作节点）
 }
 
 /**
@@ -92,7 +98,7 @@ export interface INodePool<TConfig = Record<string, any>> {
     /**
      * 查询所有服务器
      * @param role 可选，按角色过滤
-     * @returns 服务器列表
+     * @returns 节点信息列表（包含角色）
      */
     listServers(role?: ServerRole): Promise<ServerInfo[]>
 
