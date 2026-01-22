@@ -4,7 +4,7 @@
 
 功能如下
 
-![](node-pool.drawio.png)
+![](node-pool.png)
 
 ## 包管理
 
