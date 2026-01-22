@@ -37,8 +37,8 @@ export interface ServerInfo {
 export interface CreateServerParams {
     name: string                  // 实例名称
     role: ServerRole              // 角色
+    templateId: string            // 镜像模板ID
     count?: number                // 创建数量，默认为1
-    templateId?: string           // 镜像模板ID
 }
 
 /**
@@ -48,6 +48,9 @@ export interface TemplateInfo {
     id: string                    // 模板ID
     description: string           // 模板描述
     name: string                  // 模板名称
+    region?: string               // 地域
+    zone?: string                 // 可用区
+    instanceType?: string         // 实例机型
 }
 
 /**
@@ -70,7 +73,7 @@ export interface INodePool<TConfig = Record<string, any>> {
      * 设置认证信息
      * @param config 云服务商配置
      */
-    setCredentials(config: TConfig): void
+    setConfig(config: TConfig): void
 
     /**
      * 创建服务器
