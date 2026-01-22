@@ -10,8 +10,8 @@
  * @see https://cloud.tencent.com/document/api/213/15692
  */
 
-import type { INodePool, ServerInfo, NodeInfo, CreateServerParams, ListTemplateInfo, ApiServerStatus } from '../../interface'
-import { ServerStatus, ServerRole } from '../../interface'
+import type { ICloudVendor, ServerInfo, NodeInfo, CreateServerParams, ListTemplateInfo, ApiServerStatus } from '../interface'
+import { ServerStatus, ServerRole } from '../interface'
 import { createRequest } from './signedRequest'
 
 // ============================================================================
@@ -159,7 +159,7 @@ const STATUS_MAP: Record<string, ServerStatus> = {
  * })
  * ```
  */
-export class TencentNodePool implements INodePool<TencentConfig> {
+export class TencentCloud implements ICloudVendor<TencentConfig> {
   /** 腾讯云 SecretId */
   private secretId?: string
   /** 腾讯云 SecretKey */
@@ -394,24 +394,5 @@ export class TencentNodePool implements INodePool<TencentConfig> {
       id: template.LaunchTemplateId,
       name: template.LaunchTemplateName
     }))
-  }
-
-  /**
-   * 查询 API Server 状态
-   *
-   * TODO: 实现 API Server 健康检查
-   * 可以通过 Kubernetes API 或 HTTP 端点检查
-   *
-   * @param _apiServerIp - API Server 的 IP 地址
-   * @returns API Server 状态
-   * @throws {Error} 当前未实现
-   */
-  async getApiServerStatus(_apiServerIp: string): Promise<ApiServerStatus> {
-    // TODO: 实现 API Server 健康检查
-    // 可以通过以下方式：
-    // 1. 调用 Kubernetes API /healthz 端点
-    // 2. 检查 API Server 的 TCP 连接
-    // 3. 查询 TKE 集群状态
-    throw new Error('getApiServerStatus not implemented yet')
   }
 }

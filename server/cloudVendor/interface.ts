@@ -66,11 +66,11 @@ export interface ApiServerStatus {
 }
 
 /**
- * 节点池接口
+ * 云服务商接口
  * 定义了所有云服务商必须实现的功能
  * @template TConfig 云服务商配置类型
  */
-export interface INodePool<TConfig = Record<string, any>> {
+export interface ICloudVendor<TConfig = Record<string, any>> {
     /**
      * 设置认证信息
      * @param config 云服务商配置
@@ -106,15 +106,8 @@ export interface INodePool<TConfig = Record<string, any>> {
     terminateServer(instanceId: string): Promise<boolean>
 
     /**
-     * 查询可用的镜像模板
-     * @returns 镜像模板列表
+     * 查询可用的服务器模板
+     * @returns 服务器模板列表
      */
     listTemplates(): Promise<ListTemplateInfo[]>
-
-    /**
-     * 查询 API Server 状态
-     * @param apiServerIp API Server 的IP地址
-     * @returns API Server 状态
-     */
-    getApiServerStatus(apiServerIp: string): Promise<ApiServerStatus>
 }
