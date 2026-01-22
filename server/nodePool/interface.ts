@@ -48,15 +48,11 @@ export interface CreateServerParams {
 }
 
 /**
- * 镜像模板信息
+ * 列出的模板信息
  */
-export interface TemplateInfo {
+export interface ListTemplateInfo {
     id: string                    // 模板ID
-    description: string           // 模板描述
     name: string                  // 模板名称
-    region?: string               // 地域
-    zone?: string                 // 可用区
-    instanceType?: string         // 实例机型
 }
 
 /**
@@ -113,7 +109,7 @@ export interface INodePool<TConfig = Record<string, any>> {
      * 查询可用的镜像模板
      * @returns 镜像模板列表
      */
-    listTemplates(): Promise<TemplateInfo[]>
+    listTemplates(): Promise<ListTemplateInfo[]>
 
     /**
      * 查询 API Server 状态

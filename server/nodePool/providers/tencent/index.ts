@@ -4,13 +4,13 @@
  * 实现了腾讯云 CVM（云服务器）的节点池管理功能，包括：
  * - 创建/查询/销毁实例
  * - 查询实例列表
- * - 查询镜像模板（待实现）
+ * - 查询启动模板
  * - 检查 API Server 状态（待实现）
  *
  * @see https://cloud.tencent.com/document/api/213/15692
  */
 
-import type { INodePool, ServerInfo, NodeInfo, CreateServerParams, TemplateInfo, ApiServerStatus } from '../../interface'
+import type { INodePool, ServerInfo, NodeInfo, CreateServerParams, ListTemplateInfo, ApiServerStatus } from '../../interface'
 import { ServerStatus, ServerRole } from '../../interface'
 import { createRequest } from './signedRequest'
 
@@ -75,6 +75,36 @@ interface DescribeInstancesResponse {
 interface RunInstancesResponse {
   /** 创建成功的实例 ID 列表 */
   InstanceIdSet: string[]
+}
+
+/**
+ * 启动模板信息
+ */
+interface LaunchTemplate {
+  /** 启动模板 ID */
+  LaunchTemplateId: string
+  /** 启动模板名称 */
+  LaunchTemplateName: string
+  /** 最新版本号 */
+  LatestVersionNumber: number
+  /** 默认版本号 */
+  DefaultVersionNumber: number
+  /** 版本数量 */
+  LaunchTemplateVersionCount: number
+  /** 创建时间 */
+  CreationTime: string
+  /** 创建者 */
+  CreatedBy: string
+}
+
+/**
+ * DescribeLaunchTemplates API 响应数据
+ */
+interface DescribeLaunchTemplatesResponse {
+  /** 启动模板列表 */
+  LaunchTemplateSet: LaunchTemplate[]
+  /** 符合条件的模板数量 */
+  TotalCount: number
 }
 
 // ============================================================================
@@ -336,18 +366,34 @@ export class TencentNodePool implements INodePool<TencentConfig> {
   /**
    * 查询可用的镜像模板
    *
-   * TODO: 实现查询镜像模板的逻辑
-   * 腾讯云 API 为 DescribeImages
+   * 调用腾讯云 DescribeLaunchTemplates API 查询启动模板列表。
    *
    * @returns 镜像模板列表
-   * @throws {Error} 当前未实现
    */
-  async listTemplates(): Promise<TemplateInfo[]> {
-    // TODO: 实现查询镜像模板的逻辑
-    // 腾讯云 API 为 DescribeImages
-    // 文档: https://cloud.tencent.com/document/api/213/15715
-    // 返回的模板应包含 region、zone、instanceType 等信息
-    throw new Error('listTemplates not implemented yet')
+  async listTemplates(): Promise<ListTemplateInfo[]> {
+    const request = this.createRequest()
+
+    // 调用腾讯云 DescribeLaunchTemplates API
+    const result = await request<
+      { Limit: number; Offset: number },
+      DescribeLaunchTemplatesResponse
+    >({
+      service: 'cvm',
+      version: '2017-03-12',
+      action: 'DescribeLaunchTemplates',
+      payload: {
+        Limit: 100,
+        Offset: 0,
+      },
+      endpoint: 'cvm.tencentcloudapi.com',
+      region: this.region,
+    })
+
+    // 转换为统一的 TemplateInfo 格式
+    return result.Response.LaunchTemplateSet.map((template) => ({
+      id: template.LaunchTemplateId,
+      name: template.LaunchTemplateName
+    }))
   }
 
   /**
