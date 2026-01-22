@@ -183,16 +183,11 @@ export class TencentNodePool implements INodePool<TencentConfig> {
    * 创建服务器
    *
    * 调用腾讯云 RunInstances API 创建一台或多台云服务器实例。
-   * 创建后会自动查询实例详情并返回。
    *
    * @param params - 创建服务器参数
-   * @returns 创建的服务器信息
-   *
-   * @remarks
-   * TODO: 从 templateId 获取完整的 template 信息（region、zone、instanceType）
-   * TODO: 当前需要先查询 template 获取 region 和 zone，再创建实例
+   * @returns 创建的所有服务器ID列表
    */
-  async createServer(params: CreateServerParams): Promise<ServerInfo> {
+  async createServer(params: CreateServerParams): Promise<string[]> {
     const request = this.createRequest()
 
     const instanceCount = params.count || 1
@@ -216,9 +211,8 @@ export class TencentNodePool implements INodePool<TencentConfig> {
       region: this.region,
     })
 
-    // 获取创建的实例详情
-    const instanceId = result.Response.InstanceIdSet[0]
-    return this.getServerStatus(instanceId, this.region)
+    // 返回所有创建的实例 ID
+    return result.Response.InstanceIdSet
   }
 
   /**

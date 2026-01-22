@@ -78,9 +78,9 @@ export interface INodePool<TConfig = Record<string, any>> {
     /**
      * 创建服务器
      * @param params 创建服务器参数
-     * @returns 创建的服务器信息
+     * @returns 创建的服务器ID列表
      */
-    createServer(params: CreateServerParams): Promise<ServerInfo>
+    createServer(params: CreateServerParams): Promise<string[]>
 
     /**
      * 查询服务器状态
