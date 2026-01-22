@@ -4,8 +4,10 @@
   "private": true,
   "pnpm": {
     "onlyBuiltDependencies": [
+      "@types/node",
       "better-sqlite3",
-      "@types/node"
+      "cpu-features",
+      "ssh2"
     ]
   },
   "scripts": {
@@ -13,9 +15,11 @@
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
+    "@kubernetes/client-node": "^1.4.0",
     "better-sqlite3": "^12.6.2",
     "drizzle-orm": "^0.45.1",
     "nuxt": "^4.2.2",
+    "ssh2": "^1.17.0",
     "vue": "^3.5.27",
     "vue-router": "^4.6.4"
   },
