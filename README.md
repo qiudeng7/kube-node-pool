@@ -6,6 +6,10 @@
 
 ![](./node-pool.jpg)
 
+## 包管理
+
+使用pnpm，如果有需要构建的包，把它添加到 package.json 中的 `pnpm.onlyBuiltDependencies` 字段
+
 ## 数据库
 
 1. 数据库使用 drizzle + SQLite
