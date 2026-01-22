@@ -13,7 +13,7 @@ export enum ServerStatus {
 /**
  * 服务器角色
  */
-export enum ServerRole {
+export enum NodeRole {
     CONTROL_PLANE = 'control-plane',
     WORKER = 'worker',
 }
@@ -34,7 +34,7 @@ export interface ServerInfo {
  * 节点信息（扩展服务器信息，包含角色）
  */
 export interface NodeInfo extends ServerInfo {
-    role: ServerRole              // 角色（控制面/工作节点）
+    role: NodeRole              // 角色（控制面/工作节点）
 }
 
 /**
@@ -42,7 +42,7 @@ export interface NodeInfo extends ServerInfo {
  */
 export interface CreateServerParams {
     name: string                  // 实例名称
-    role: ServerRole              // 角色
+    role: NodeRole              // 角色
     templateId: string            // 镜像模板ID
     count?: number                // 创建数量，默认为1
 }
@@ -96,7 +96,7 @@ export interface ICloudVendor<TConfig = Record<string, any>> {
      * @param role 可选，按角色过滤
      * @returns 节点信息列表（包含角色）
      */
-    listServers(role?: ServerRole): Promise<ServerInfo[]>
+    listServers(): Promise<ServerInfo[]>
 
     /**
      * 销毁服务器

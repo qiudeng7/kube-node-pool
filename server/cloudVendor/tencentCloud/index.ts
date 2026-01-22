@@ -11,7 +11,7 @@
  */
 
 import type { ICloudVendor, ServerInfo, NodeInfo, CreateServerParams, ListTemplateInfo, ApiServerStatus } from '../interface'
-import { ServerStatus, ServerRole } from '../interface'
+import { ServerStatus, NodeRole } from '../interface'
 import { createRequest } from './signedRequest'
 
 // ============================================================================
@@ -293,15 +293,9 @@ export class TencentCloud implements ICloudVendor<TencentConfig> {
    *
    * 调用腾讯云 DescribeInstances API 查询实例列表。
    *
-   * @param role - 可选，按角色过滤（当前未实现）
-   * @returns 节点信息列表（包含角色）
-   *
-   * @remarks
-   * TODO: 当前未实现按角色过滤功能
-   * TODO: 当前固定返回 100 条记录，需要实现分页
-   * TODO: 需要支持多地域查询
+   * @returns 服务器信息列表
    */
-  async listServers(_role?: ServerRole): Promise<ServerInfo[]> {
+  async listServers(): Promise<ServerInfo[]> {
     const request = this.createRequest()
 
     // 调用腾讯云 DescribeInstances API

@@ -23,7 +23,7 @@ export const nodes = sqliteTable('nodes', {
   name: text('name').notNull(),
   ip: text('ip').notNull(),
   clusterId: integer('cluster_id').notNull().references(() => clusters.id, { onDelete: 'cascade' }),
-  role: text('role', { enum: ['control-plane', 'worker'] }).notNull(),
+  role: text('role', { enum: ['control-plane', 'worker'] }),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 })
