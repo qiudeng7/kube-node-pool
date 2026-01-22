@@ -32,3 +32,12 @@
 1. 配置性的：设置secrets
 2. 功能性的：创建服务器、查询服务器状态、查询可用的template 等。
 
+## 集群
+
+接口如下
+
+1. 获取一个脚本，对server进行setup，安装kubeadm和kubectl之类；
+2. 初始化节点，把节点初始化为 control-plane；
+3. 加入集群，让节点加入集群；
+4. 检查k8s集群节点状态，相当于执行kubectl get nodes；
+5. 获取集群kubeconfig
