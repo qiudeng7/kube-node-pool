@@ -35,11 +35,11 @@ export const pollingRecords = sqliteTable('polling_records', {
   result: text('result').notNull(),
 })
 
-export type User = typeof users.$inferSelect
-export type NewUser = typeof users.$inferInsert
-export type Cluster = typeof clusters.$inferSelect
-export type NewCluster = typeof clusters.$inferInsert
-export type Node = typeof nodes.$inferSelect
-export type NewNode = typeof nodes.$inferInsert
-export type PollingRecord = typeof pollingRecords.$inferSelect
-export type NewPollingRecord = typeof pollingRecords.$inferInsert
+export type UserSchema = typeof users.$inferSelect
+export type NewUserSchema = typeof users.$inferInsert
+export type ClusterSchema = typeof clusters.$inferSelect
+export type NewClusterSchema = typeof clusters.$inferInsert
+export type NodeSchema = typeof nodes.$inferSelect
+export type NewNodeSchema = typeof nodes.$inferInsert
+export type PollingRecordSchema = typeof pollingRecords.$inferSelect
+export type NewPollingRecordSchema = typeof pollingRecords.$inferInsert
