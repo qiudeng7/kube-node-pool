@@ -10,6 +10,7 @@
  * @see https://cloud.tencent.com/document/api/213/15692
  */
 
+import { param } from 'drizzle-orm'
 import type { ICloudVendor, ServerInfo, CreateServerParams, ListTemplateInfo, } from '../interface'
 import { ServerStatus } from '../interface'
 import { createRequest } from './signedRequest'
@@ -170,7 +171,7 @@ export class TencentCloud implements ICloudVendor<TencentConfig> {
    * 构造函数
    * 初始化腾讯云节点池
    */
-  constructor() {}
+  constructor() { }
 
   /**
    * 设置认证信息
@@ -224,8 +225,10 @@ export class TencentCloud implements ICloudVendor<TencentConfig> {
     // 调用腾讯云 RunInstances API
     const result = await request<
       {
-        ImageId: string
         InstanceCount: number
+        LaunchTemplate: {
+          LaunchTemplateId: string
+        }
       },
       RunInstancesResponse
     >({
@@ -233,8 +236,10 @@ export class TencentCloud implements ICloudVendor<TencentConfig> {
       version: '2017-03-12',
       action: 'RunInstances',
       payload: {
-        ImageId: params.templateId,
         InstanceCount: instanceCount,
+        LaunchTemplate: {
+          LaunchTemplateId: params.templateId
+        }
       },
       endpoint: 'cvm.tencentcloudapi.com',
       region: this.region,

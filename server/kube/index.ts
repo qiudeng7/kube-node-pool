@@ -302,6 +302,7 @@ export async function getKubeconfig(config: SSHConfig): Promise<string> {
 // 重新导出依赖模块的类型和函数
 // ============================================================================
 
-export { SSHConfig } from './ssh.js'
+// 类型导出使用 export type (TypeScript interface 在运行时不存在)
+export type { SSHConfig } from './ssh.js'
 export { getSetupScript, getKubeadmConfig } from './getAssets.js'
 export { execSSH, uploadFile, uploadContent, uploadAndExecScript } from './ssh.js'
