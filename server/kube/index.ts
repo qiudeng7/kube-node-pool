@@ -40,8 +40,10 @@ export interface InitResult {
   success: boolean
   /** kubeconfig 内容 */
   kubeconfig?: string
-  /** 加入集群的命令 */
+  /** worker 节点加入集群的命令 */
   joinCommand?: string
+  /** control-plane 节点加入集群的命令 */
+  controlPlaneJoinCommand?: string
   /** 错误信息 */
   error?: string
 }
@@ -50,6 +52,20 @@ export interface InitResult {
  * 加入集群结果
  */
 export interface JoinResult {
+  /** 节点 IP */
+  host: string
+  /** 是否成功 */
+  success: boolean
+  /** 错误信息 */
+  error?: string
+}
+
+/**
+ * Setup 节点结果
+ */
+export interface SetupResult {
+  /** 节点 IP */
+  host: string
   /** 是否成功 */
   success: boolean
   /** 错误信息 */
@@ -61,15 +77,70 @@ export interface JoinResult {
 // ============================================================================
 
 /**
+ * 并行在多个节点上执行 setup 脚本
+ *
+ * 在多个服务器上并行执行 Kubernetes 环境准备脚本
+ *
+ * @param configs - SSH 配置数组
+ * @returns 每个节点的 setup 结果
+ *
+ * @example
+ * ```typescript
+ * const results = await setupServers([
+ *   { host: '192.168.1.100', username: 'ubuntu', password: 'pwd1' },
+ *   { host: '192.168.1.101', username: 'ubuntu', password: 'pwd2' },
+ *   { host: '192.168.1.102', username: 'ubuntu', password: 'pwd3' }
+ * ])
+ *
+ * results.forEach(result => {
+ *   if (result.success) {
+ *     console.log(`${result.host} setup 成功`)
+ *   } else {
+ *     console.error(`${result.host} setup 失败: ${result.error}`)
+ *   }
+ * })
+ * ```
+ */
+export async function setupNodes(configs: SSHConfig[]): Promise<SetupResult[]> {
+  const setupScript = getSetupScript()
+
+  const promises = configs.map(async (config) => {
+    try {
+      await uploadAndExecScript(config, setupScript, '/tmp/setup-k8s.sh')
+      return {
+        host: config.host,
+        success: true,
+      }
+    } catch (error: any) {
+      return {
+        host: config.host,
+        success: false,
+        error: error.message,
+      }
+    }
+  })
+
+  return await Promise.all(promises)
+}
+
+/**
  * 初始化节点为 control-plane
  *
- * 在远程服务器上执行 setup 脚本，然后使用配置文件运行 kubeadm init 初始化集群
+ * 使用配置文件运行 kubeadm init 初始化集群
+ *
+ * 注意: 此函数不会自动执行 setup 脚本，调用者需要先使用 setupServers 或 uploadAndExecScript 执行 setup
  *
  * @param config - SSH 配置
  * @returns 初始化结果
  *
  * @example
  * ```typescript
+ * // 先并行执行 setup
+ * await setupServers([
+ *   { host: '192.168.1.100', username: 'ubuntu', password: 'your-password' }
+ * ])
+ *
+ * // 再初始化集群
  * const result = await initControlPlane({
  *   host: '192.168.1.100',
  *   username: 'ubuntu',
@@ -86,21 +157,18 @@ export interface JoinResult {
  */
 export async function initControlPlane(config: SSHConfig): Promise<InitResult> {
   try {
-    // 1. 获取并上传 setup 脚本并执行
-    const setupScript = getSetupScript()
-    const setupRemotePath = '/tmp/setup-k8s.sh'
-
-    await uploadAndExecScript(config, setupScript, setupRemotePath)
-
-    // 2. 获取并上传 kubeadm 配置文件
+    // 1. 上传 kubeadm 配置文件
     const kubeadmConfig = getKubeadmConfig()
     const configRemotePath = '/tmp/kubeadm-config.yaml'
 
-    await uploadContent(config, kubeadmConfig, configRemotePath)
+    await uploadContent({
+      config,
+      content: kubeadmConfig,
+      remotePath: configRemotePath
+    })
 
-    // 3. 运行 kubeadm init，使用配置文件
+    // 2. 运行 kubeadm init，使用配置文件
     // 配置文件中已指定 cri-socket 和网络配置
-
     try {
       await execSSH(config, `sudo kubeadm init --config=${configRemotePath}`)
     } catch (error: any) {
@@ -110,18 +178,15 @@ export async function initControlPlane(config: SSHConfig): Promise<InitResult> {
       }
     }
 
-    // 4. 获取 kubeconfig
+    // 3. 获取 kubeconfig
     const kubeconfig = await execSSH(config, 'sudo cat /etc/kubernetes/admin.conf')
 
-    // 5. 获取 join 命令
-    try {
-      const joinCommand = await execSSH(config, 'sudo kubeadm token create --print-join-command')
+    // 4. 获取 worker 节点的 join 命令
+    let joinCommand: string | undefined
+    let controlPlaneJoinCommand: string | undefined
 
-      return {
-        success: true,
-        kubeconfig,
-        joinCommand,
-      }
+    try {
+      joinCommand = await execSSH(config, 'sudo kubeadm token create --print-join-command')
     } catch (error: any) {
       // 即使获取 join 命令失败，初始化可能仍然成功
       return {
@@ -129,6 +194,31 @@ export async function initControlPlane(config: SSHConfig): Promise<InitResult> {
         kubeconfig,
         error: `初始化成功但获取 join 命令失败: ${error.message}`,
       }
+    }
+
+    // 5. 生成证书密钥并获取 control-plane 节点的 join 命令
+    try {
+      // 上传证书并获取证书密钥
+      const certKeyOutput = await execSSH(
+        config,
+        'sudo kubeadm init phase upload-certs --upload-certs 2>/dev/null | tail -n 1'
+      )
+      const certificateKey = certKeyOutput.trim()
+
+      if (certificateKey && joinCommand) {
+        // 为 control-plane 节点生成 join 命令
+        controlPlaneJoinCommand = `${joinCommand} --control-plane --certificate-key ${certificateKey}`
+      }
+    } catch (error: any) {
+      // 即使获取 control-plane join 命令失败，worker join 命令可能已经获取成功
+      console.warn(`获取 control-plane join 命令失败: ${error.message}`)
+    }
+
+    return {
+      success: true,
+      kubeconfig,
+      joinCommand,
+      controlPlaneJoinCommand,
     }
   } catch (error: any) {
     return {
@@ -141,53 +231,65 @@ export async function initControlPlane(config: SSHConfig): Promise<InitResult> {
 /**
  * 让节点加入集群
  *
- * 在远程服务器上执行 setup 脚本，然后运行 kubeadm join 加入集群
+ * 并行执行 kubeadm join 命令让多个节点加入集群
  *
- * @param config - SSH 配置
+ * 注意: 此函数不会自动执行 setup 脚本，调用者需要先使用 setupNodes 或 uploadAndExecScript 执行 setup
+ *
+ * @param configs - SSH 配置数组
  * @param joinCommand - 加入集群的命令（从 control-plane 获取）
- * @returns 加入结果
+ * @returns 每个节点的加入结果
  *
  * @example
  * ```typescript
- * const result = await joinCluster({
- *   host: '192.168.1.101',
- *   username: 'ubuntu',
- *   password: 'your-password'
- * }, 'kubeadm join 192.168.1.100:6443 --token xxx --discovery-token-ca-cert-hash sha256:xxx')
+ * // 先并行执行 setup
+ * await setupNodes([
+ *   { host: '192.168.1.101', username: 'ubuntu', password: 'pwd1' },
+ *   { host: '192.168.1.102', username: 'ubuntu', password: 'pwd2' },
+ *   { host: '192.168.1.103', username: 'ubuntu', password: 'pwd3' }
+ * ])
  *
- * if (result.success) {
- *   console.log('节点成功加入集群')
- * } else {
- *   console.error('加入集群失败:', result.error)
- * }
+ * // 再并行加入集群
+ * const results = await joinCluster([
+ *   { host: '192.168.1.101', username: 'ubuntu', password: 'pwd1' },
+ *   { host: '192.168.1.102', username: 'ubuntu', password: 'pwd2' },
+ *   { host: '192.168.1.103', username: 'ubuntu', password: 'pwd3' }
+ * ], 'kubeadm join 192.168.1.100:6443 --token xxx --discovery-token-ca-cert-hash sha256:xxx')
+ *
+ * results.forEach(result => {
+ *   if (result.success) {
+ *     console.log(`${result.host} 加入集群成功`)
+ *   } else {
+ *     console.error(`${result.host} 加入集群失败: ${result.error}`)
+ *   }
+ * })
  * ```
  */
-export async function joinCluster(config: SSHConfig, joinCommand: string): Promise<JoinResult> {
-  try {
-    // 1. 获取并上传 setup 脚本并执行
-    const setupScript = getSetupScript()
-    const setupRemotePath = '/tmp/setup-k8s.sh'
+export async function joinCluster(configs: SSHConfig[], joinCommand: string): Promise<JoinResult[]> {
+  const promises = configs.map(async (config) => {
+    try {
+      // 执行 join 命令
+      // 添加 cri-socket 参数
+      const commandWithCriSocket = joinCommand.replace(
+        /kubeadm join/,
+        'sudo kubeadm join --cri-socket=/run/cri-dockerd.sock'
+      )
 
-    await uploadAndExecScript(config, setupScript, setupRemotePath)
+      await execSSH(config, commandWithCriSocket)
 
-    // 2. 执行 join 命令
-    // 添加 cri-socket 参数
-    const commandWithCriSocket = joinCommand.replace(
-      /kubeadm join/,
-      'sudo kubeadm join --cri-socket=/run/cri-dockerd.sock'
-    )
-
-    await execSSH(config, commandWithCriSocket)
-
-    return {
-      success: true,
+      return {
+        host: config.host,
+        success: true,
+      }
+    } catch (error: any) {
+      return {
+        host: config.host,
+        success: false,
+        error: error.message,
+      }
     }
-  } catch (error: any) {
-    return {
-      success: false,
-      error: error.message,
-    }
-  }
+  })
+
+  return await Promise.all(promises)
 }
 
 /**

@@ -26,7 +26,6 @@ export interface ServerInfo {
  * 创建服务器参数
  */
 export interface CreateServerParams {
-    name: string                  // 实例名称
     templateId: string            // 镜像模板ID
     count?: number                // 创建数量，默认为1
 }
