@@ -17,6 +17,7 @@
   "dependencies": {
     "@kubernetes/client-node": "^1.4.0",
     "better-sqlite3": "^12.6.2",
+    "dotenv": "^17.2.3",
     "drizzle-orm": "^0.45.1",
     "nuxt": "^4.2.2",
     "ssh2": "^1.17.0",
