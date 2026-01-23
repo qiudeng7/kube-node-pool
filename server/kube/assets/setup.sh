@@ -4,6 +4,10 @@
 # TODO:
 # 1. docker 更换为 containerd
 
+
+# 设置非交互模式
+export DEBIAN_FRONTEND=noninteractive
+
 # 工作目录
 mkdir -p /home/ubuntu/install-k8s && cd /home/ubuntu/install-k8s
 
@@ -15,6 +19,7 @@ cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
 net.ipv4.ip_forward = 1
 EOF
 sudo sysctl --system
+
 # 安装 Docker
 install -m 0755 -d /etc/apt/keyrings
 # 添加 Docker 官方 GPG 密钥
@@ -117,9 +122,10 @@ sudo systemctl enable --now cri-docker.socket
 sudo systemctl start cri-docker
 
 # 安装 kubeadm、kubelet、kubectl
-curl -fsSL https://mirrors.tuna.tsinghua.edu.cn/kubernetes/core%3Astable%3A/v1.31/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 cat > /tmp/kubernetes.list <<EOF
-deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://mirrors.tuna.tsinghua.edu.cn/kubernetes/core:/stable:/v1.31/deb/ /
+deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] http://mirrors.tuna.tsinghua.edu.cn/kubernetes/core:/stable:/v1.31/deb/ /
+deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] http://mirrors.tuna.tsinghua.edu.cn/kubernetes/addons:/cri-o:/stable:/v1.31/deb/ /
 EOF
 sudo mv /tmp/kubernetes.list /etc/apt/sources.list.d/kubernetes.list
 
