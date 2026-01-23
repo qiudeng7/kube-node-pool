@@ -10,8 +10,8 @@
  * @see https://cloud.tencent.com/document/api/213/15692
  */
 
-import type { ICloudVendor, ServerInfo, NodeInfo, CreateServerParams, ListTemplateInfo, ApiServerStatus } from '../interface'
-import { ServerStatus, NodeRole } from '../interface'
+import type { ICloudVendor, ServerInfo, CreateServerParams, ListTemplateInfo, } from '../interface'
+import { ServerStatus } from '../interface'
 import { createRequest } from './signedRequest'
 
 // ============================================================================
@@ -154,7 +154,6 @@ const STATUS_MAP: Record<string, ServerStatus> = {
  * // 创建服务器
  * const server = await pool.createServer({
  *   name: 'worker-1',
- *   role: ServerRole.WORKER,
  *   count: 1
  * })
  * ```

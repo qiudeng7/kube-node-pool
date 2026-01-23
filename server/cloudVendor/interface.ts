@@ -11,14 +11,6 @@ export enum ServerStatus {
 }
 
 /**
- * 服务器角色
- */
-export enum NodeRole {
-    CONTROL_PLANE = 'control-plane',
-    WORKER = 'worker',
-}
-
-/**
  * 服务器信息
  */
 export interface ServerInfo {
@@ -31,18 +23,10 @@ export interface ServerInfo {
 }
 
 /**
- * 节点信息（扩展服务器信息，包含角色）
- */
-export interface NodeInfo extends ServerInfo {
-    role: NodeRole              // 角色（控制面/工作节点）
-}
-
-/**
  * 创建服务器参数
  */
 export interface CreateServerParams {
     name: string                  // 实例名称
-    role: NodeRole              // 角色
     templateId: string            // 镜像模板ID
     count?: number                // 创建数量，默认为1
 }
@@ -53,16 +37,6 @@ export interface CreateServerParams {
 export interface ListTemplateInfo {
     id: string                    // 模板ID
     name: string                  // 模板名称
-}
-
-/**
- * API Server 状态
- */
-export interface ApiServerStatus {
-    healthy: boolean              // 是否健康
-    version: string               // Kubernetes 版本
-    endpoint: string              // API Server 地址
-    ready: boolean                // 是否就绪
 }
 
 /**
@@ -93,7 +67,6 @@ export interface ICloudVendor<TConfig = Record<string, any>> {
 
     /**
      * 查询所有服务器
-     * @param role 可选，按角色过滤
      * @returns 节点信息列表（包含角色）
      */
     listServers(): Promise<ServerInfo[]>
