@@ -12,14 +12,20 @@ TODO: 需要调整当前的设计图
 
 使用pnpm，如果有需要构建的包，把它添加到 package.json 中的 `pnpm.onlyBuiltDependencies` 字段
 
-## db 数据库
+## 模块设计
+
+需求中描述的上层功能通过 nuxt 和 [nuxt-scheduler](https://github.com/jurassicjs/nuxt-scheduler)实现，这里描述底层支持模块的设计。
+
+![](./module-overview.drawio.png)
+
+### db 数据库
 
 1. 数据库连接使用 drizzle + SQLite。
 2. 数据库表设计见 [schema.ts](../server/db/schema.ts)
 
 TODO: db/init.ts 似乎是冗余的，且实现并不规范。
 
-## cloudVendor 云服务商
+### cloudVendor 云服务商
 
 云服务商的模块结构如下：
 - cloudVendor               云服务商模块
@@ -32,7 +38,7 @@ TODO: db/init.ts 似乎是冗余的，且实现并不规范。
 查看接口: [interface.ts](../server/cloudVendor/interface.ts)
 
 
-## kube
+### kube
 
 提供以下功能：
 1. 初始化 control-plane 节点
@@ -41,5 +47,7 @@ TODO: db/init.ts 似乎是冗余的，且实现并不规范。
 4. 获取集群 kubeconfig
 
 具体实现和接口见 [kube/index.ts](../server/kube/index.ts)
+
+需要ssh模块的支持，通过ssh2提供。
 
 TODO: 需要更好的初始化集群的脚本，可以尝试k3s和一些ansible方案
