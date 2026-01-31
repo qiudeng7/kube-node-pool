@@ -30,7 +30,7 @@
 
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { runRemoteScript } from './ssh.js'
+import { createSSHClient, type SSHConfig, type ExecutionOptions } from './ssh.js'
 
 // 获取当前文件所在目录的绝对路径
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -38,6 +38,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 // ============================================================================
 // K3s 集群管理函数
 // ============================================================================
+
+/**
+ * K3s 操作的基础配置
+ */
+interface K3sBaseConfig extends SSHConfig {
+    /** K3s 集群认证令牌 */
+    k3sToken: string
+}
+
+/**
+ * K3s 集群管理选项
+ */
+interface K3sOptions extends ExecutionOptions {}
 
 /**
  * 在远程服务器安装 Clash 代理
@@ -52,6 +65,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
  * @param params.sshPubKey - SSH 私钥内容（字符串）
  * @param params.sshPubKeyPath - SSH 私钥文件路径
  * @param params.sshPasswd - SSH 密码
+ * @param params.options - 执行选项（重试、超时、日志回调等）
  *
  * @returns 执行结果
  *
@@ -61,32 +75,22 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
  *   serverIP: '192.168.1.10',
  *   subscriptionURL: 'https://example.com/config.yaml',
  *   sshUser: 'ubuntu',
- *   sshPubKey: privateKey
+ *   sshPubKey: privateKey,
+ *   options: {
+ *     onStdout: (data) => console.log(data),
+ *     onStderr: (data) => console.error(data)
+ *   }
  * })
  * ```
  */
-export async function installClash(installClashParams: {
-    subscriptionURL: string,
-    serverIP: string,
-    sshPort?: number,
-    sshUser?: string,
-    sshPubKey?: string,
-    sshPubKeyPath?: string,
-    sshPasswd?: string
-}) {
-    const { subscriptionURL, serverIP, sshPort, sshUser, sshPubKey, sshPubKeyPath, sshPasswd } = installClashParams
+export async function installClash(params: {
+    subscriptionURL: string
+} & SSHConfig & { options?: K3sOptions }) {
+    const { subscriptionURL, options, ...sshConfig } = params
     const scriptPath = join(__dirname, 'assets', 'clash_install.sh')
 
-    return runRemoteScript({
-        serverIP,
-        sshPort,
-        sshUser,
-        sshPubKey,
-        sshPubKeyPath,
-        sshPasswd,
-        scriptPath,
-        args: [subscriptionURL]
-    })
+    const ssh = createSSHClient(sshConfig)
+    return ssh.script(scriptPath, [subscriptionURL], options)
 }
 
 /**
@@ -103,6 +107,7 @@ export async function installClash(installClashParams: {
  * @param params.sshPubKey - SSH 私钥内容（字符串）
  * @param params.sshPubKeyPath - SSH 私钥文件路径
  * @param params.sshPasswd - SSH 密码
+ * @param params.options - 执行选项（重试、超时、日志回调等）
  *
  * @returns 执行结果
  *
@@ -112,32 +117,20 @@ export async function installClash(installClashParams: {
  *   serverIP: '192.168.1.10',
  *   k3sToken: 'K10abcdef1234567890',
  *   sshUser: 'ubuntu',
- *   sshPubKey: privateKey
+ *   sshPubKey: privateKey,
+ *   options: {
+ *     onStdout: (data) => console.log(data),
+ *     onStderr: (data) => console.error(data)
+ *   }
  * })
  * ```
  */
-export async function initK3s(initK3sParams: {
-    serverIP: string,
-    k3sToken: string,
-    sshPort?: number,
-    sshUser?: string,
-    sshPubKey?: string,
-    sshPubKeyPath?: string,
-    sshPasswd?: string
-}) {
-    const { serverIP, k3sToken, sshPort, sshUser, sshPubKey, sshPubKeyPath, sshPasswd } = initK3sParams
+export async function initK3s(params: K3sBaseConfig & { options?: K3sOptions }) {
+    const { k3sToken, options, ...sshConfig } = params
     const scriptPath = join(__dirname, 'assets', 'k3s_init.sh')
 
-    return runRemoteScript({
-        serverIP,
-        sshPort,
-        sshUser,
-        sshPubKey,
-        sshPubKeyPath,
-        sshPasswd,
-        scriptPath,
-        args: [k3sToken]
-    })
+    const ssh = createSSHClient(sshConfig)
+    return ssh.script(scriptPath, [k3sToken], options)
 }
 
 /**
@@ -155,6 +148,7 @@ export async function initK3s(initK3sParams: {
  * @param params.sshPubKey - SSH 私钥内容（字符串）
  * @param params.sshPubKeyPath - SSH 私钥文件路径
  * @param params.sshPasswd - SSH 密码
+ * @param params.options - 执行选项（重试、超时、日志回调等）
  *
  * @returns 执行结果
  *
@@ -165,31 +159,24 @@ export async function initK3s(initK3sParams: {
  *   masterIP: '192.168.1.10',
  *   k3sToken: 'K10abcdef1234567890',
  *   sshUser: 'ubuntu',
- *   sshPubKey: privateKey
+ *   sshPubKey: privateKey,
+ *   options: {
+ *     onStdout: (data) => console.log(data),
+ *     onStderr: (data) => console.error(data)
+ *   }
  * })
  * ```
  */
-export async function joinK3sMaster(joinK3sMasterParams: {
-    serverIP: string,
-    masterIP: string,
-    k3sToken: string,
-    sshPort?: number,
-    sshUser?: string,
-    sshPubKey?: string,
-    sshPubKeyPath?: string,
-    sshPasswd?: string
-}) {
-    const { serverIP, masterIP, k3sToken, sshPort, sshUser, sshPubKey, sshPubKeyPath, sshPasswd } = joinK3sMasterParams
+export async function joinK3sMaster(params: {
+    masterIP: string
+} & K3sBaseConfig & { options?: K3sOptions }) {
+    const { masterIP, k3sToken, options, ...sshConfig } = params
     const scriptPath = join(__dirname, 'assets', 'k3s_join_master.sh')
 
-    return runRemoteScript({
-        serverIP,
-        sshPort,
-        sshUser,
-        sshPubKey,
-        sshPubKeyPath,
-        sshPasswd,
-        scriptPath,
-        args: [k3sToken, masterIP]
-    })
+    const ssh = createSSHClient(sshConfig)
+    return ssh.script(scriptPath, [k3sToken, masterIP], options)
 }
+
+// 导出类型，供外部使用
+export type { SSHConfig, ExecutionOptions } from './ssh.js'
+export type { SSHClient } from './ssh.js'
