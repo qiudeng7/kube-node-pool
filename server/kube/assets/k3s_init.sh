@@ -19,8 +19,8 @@ while [ $WAIT_TIME -lt $MAX_WAIT ]; do
   if systemctl is-active --quiet k3s.service; then
     echo "  [1/4] ✓ k3s.service is running"
     # 检查 API 端口是否开放
-    if curl -sfk https://localhost:6443/healthz &>/dev/null; then
-      echo "  [2/4] ✓ API server (port 6443) is responding"
+    if timeout 2 bash -c "cat < /dev/null > /dev/tcp/localhost/6443" 2>/dev/null; then
+      echo "  [2/4] ✓ API server port 6443 is open"
       # 检查是否可以获取节点信息
       NODES=$(sudo k3s kubectl get nodes -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)
 
@@ -43,7 +43,7 @@ while [ $WAIT_TIME -lt $MAX_WAIT ]; do
         echo "  [3/4] ✗ No node resources found yet"
       fi
     else
-      echo "  [2/4] ✗ API server not responding yet"
+      echo "  [2/4] ✗ API server port 6443 not open yet"
     fi
   else
     echo "  [1/4] ✗ k3s.service not running yet"
