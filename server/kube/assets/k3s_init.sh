@@ -45,8 +45,8 @@ done
 
 echo "✗ Timeout: K3s service did not start within ${MAX_WAIT}s"
 echo "Checking service status:"
-systemctl status k3s.service --no-pager
+systemctl status k3s.service --no-pager -l
 echo ""
 echo "Checking K3s logs:"
-journalctl -u k3s.service --no-pager -n 50
+journalctl -u k3s.service --no-pager -a -n 50
 exit 1
