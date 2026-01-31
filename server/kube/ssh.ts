@@ -28,6 +28,8 @@ import { readFileSync } from 'fs'
  * @param params.sshPubKeyPath - SSH 私钥文件路径
  * @param params.sshPasswd - SSH 密码
  * @param params.retries - 重试次数，默认 3 次
+ * @param params.onStdout - 标准输出回调函数
+ * @param params.onStderr - 错误输出回调函数
  *
  * @returns 执行结果
  * @returns {boolean} success - 命令是否成功执行（退出码为 0）
@@ -42,7 +44,9 @@ import { readFileSync } from 'fs'
  *   serverIP: '192.168.1.10',
  *   command: 'cat /etc/os-release',
  *   sshUser: 'ubuntu',
- *   sshPubKey: privateKey
+ *   sshPubKey: privateKey,
+ *   onStdout: (data) => console.log(data),
+ *   onStderr: (data) => console.error(data)
  * })
  *
  * if (result.success) {
@@ -58,7 +62,9 @@ export async function execRemoteCommand(params: {
     sshPubKey?: string,
     sshPubKeyPath?: string,
     sshPasswd?: string,
-    retries?: number
+    retries?: number,
+    onStdout?: (data: string) => void,
+    onStderr?: (data: string) => void
 }): Promise<{ success: boolean; message: string; stdout?: string; stderr?: string }> {
     const {
         serverIP,
@@ -68,7 +74,9 @@ export async function execRemoteCommand(params: {
         sshPubKey,
         sshPubKeyPath,
         sshPasswd,
-        retries = 3
+        retries = 3,
+        onStdout,
+        onStderr
     } = params
 
     /**
@@ -109,12 +117,16 @@ export async function execRemoteCommand(params: {
 
                     // 收集错误输出
                     stream.stderr.on('data', (data: Buffer) => {
-                        stderr += data.toString()
+                        const text = data.toString()
+                        stderr += text
+                        onStderr?.(text)
                     })
 
                     // 收集标准输出
                     stream.stdout.on('data', (data: Buffer) => {
-                        stdout += data.toString()
+                        const text = data.toString()
+                        stdout += text
+                        onStdout?.(text)
                     })
                 })
             })
@@ -210,6 +222,8 @@ export async function execRemoteCommand(params: {
  * @param params.sshPubKeyPath - SSH 私钥文件路径
  * @param params.sshPasswd - SSH 密码
  * @param params.retries - 重试次数，默认 3 次
+ * @param params.onStdout - 标准输出回调函数
+ * @param params.onStderr - 错误输出回调函数
  *
  * @returns 执行结果
  * @returns {boolean} success - 脚本是否成功执行（退出码为 0）
@@ -224,7 +238,9 @@ export async function execRemoteCommand(params: {
  *   scriptPath: '/path/to/script.sh',
  *   args: ['arg1', 'arg2'],
  *   sshUser: 'ubuntu',
- *   sshPubKey: privateKey
+ *   sshPubKey: privateKey,
+ *   onStdout: (data) => console.log(data),
+ *   onStderr: (data) => console.error(data)
  * })
  * ```
  */
@@ -237,7 +253,9 @@ export async function runRemoteScript(params: {
     sshPasswd?: string,
     scriptPath: string,
     args?: string[],
-    retries?: number
+    retries?: number,
+    onStdout?: (data: string) => void,
+    onStderr?: (data: string) => void
 }): Promise<{ success: boolean; message: string; stdout?: string; stderr?: string }> {
     const {
         serverIP,
@@ -248,7 +266,9 @@ export async function runRemoteScript(params: {
         sshPasswd,
         scriptPath,
         args = [],
-        retries = 3
+        retries = 3,
+        onStdout,
+        onStderr
     } = params
 
     /**
@@ -267,14 +287,11 @@ export async function runRemoteScript(params: {
 
                 // 构建完整的命令（使用交互式 bash）
                 // 设置 -e 遇到错误立即退出
-                // 设置 -x 打印调试信息
                 const argsStr = args.map(arg => `'${arg}'`).join(' ')
-                const command = `bash -exc '
+                const command = `bash -ec '
 set -e
 ${scriptContent.split('\n').map(line => '  ' + line).join('\n')}
 ' ${argsStr}`
-
-                console.error(`[DEBUG ${serverIP}] Executing interactive bash script...`)
 
                 // 使用 shell 模式执行（类似交互式终端）
                 conn.exec(command, {
@@ -296,23 +313,18 @@ ${scriptContent.split('\n').map(line => '  ' + line).join('\n')}
                     stream.stdout.on('data', (data: Buffer) => {
                         const text = data.toString()
                         stdout += text
-                        // 实时输出以便调试
-                        // process.stderr.write(`[STDOUT] ${text}`)
+                        onStdout?.(text)
                     })
 
                     // 收集错误输出
                     stream.stderr.on('data', (data: Buffer) => {
                         const text = data.toString()
                         stderr += text
-                        // 实时输出以便调试
-                        // process.stderr.write(`[STDERR] ${text}`)
+                        onStderr?.(text)
                     })
-
-                    console.error(`[DEBUG ${serverIP}] Script execution started...`)
 
                     // 设置超时（5 分钟），防止长时间运行的命令卡住
                     const timeout = setTimeout(() => {
-                        console.error(`[DEBUG ${serverIP}] Command timeout after 5 minutes`)
                         conn.end()
                         resolve({
                             success: false,
@@ -326,9 +338,6 @@ ${scriptContent.split('\n').map(line => '  ' + line).join('\n')}
                     stream.on('close', (code: number) => {
                         clearTimeout(timeout)
                         conn.end()
-                        console.error(`[DEBUG ${serverIP}] Exit code: ${code}, stdout: ${stdout.length} bytes, stderr: ${stderr.length} bytes`)
-                        if (stdout) console.error(`[DEBUG ${serverIP}] stdout: ${stdout.substring(0, 500)}`)
-                        if (stderr) console.error(`[DEBUG ${serverIP}] stderr: ${stderr}`)
                         resolve({
                             success: code === 0,
                             message: code === 0 ? '脚本执行成功' : `脚本执行失败，退出码: ${code}`,
