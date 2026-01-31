@@ -316,8 +316,8 @@ async function main() {
     const joinPromises = otherMasters.map(async (server) => {
       console.log(`  - 正在让 ${server.name} (${server.privateIp}) 加入集群...`)
 
-      // 创建日志回调
-      const joinLog = createLogCallbacks('joinK3sMaster', server.name, server.privateIp)
+      // 创建日志回调（使用公网 IP）
+      const joinLog = createLogCallbacks('joinK3sMaster', server.name, server.ip)
       joinLog.setCommand(`bash k3s_join_master.sh ${CONFIG.K3S_TOKEN} ${firstMaster.privateIp}`)
       joinLog.setRetries(3)
 
