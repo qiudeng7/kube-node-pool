@@ -1,22 +1,22 @@
 /**
- * 测试腾讯云模块和 Kubernetes 集群创建
+ * 测试腾讯云模块和 K3s 集群创建
  *
  * 测试流程：
  * 1. 通过 dotenv 读取腾讯云密钥
- * 2. 创建所有节点（control-plane + worker）
+ * 2. 创建所有节点（第一个为 master，其他为 master 节点）
  * 3. 等待所有服务器就绪
- * 4. 并行在所有节点上执行 setup 脚本
- * 5. 在第一个 control-plane 节点上初始化集群
- * 6. 并行在其他节点上加入集群
+ * 4. 在第一个 master 节点上初始化 K3s 集群
+ * 5. 并行在其他 master 节点上加入集群
+ * 6. 在所有节点上安装 Clash 代理
  * 7. 查询集群节点状态
  */
 
 import 'dotenv/config'
-import { readFileSync } from 'fs'
+import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { TencentCloud } from '../server/cloudVendor/tencentCloud/index.js'
-import type { SSHConfig } from '../server/kube/ssh.js'
-import { setupNodes, initControlPlane, joinCluster, getNodes } from '../server/kube/index.js'
+import type { ServerInfo } from '../server/cloudVendor/interface.js'
+import { initK3s, joinK3sMaster, execRemoteCommand } from '../server/kube/index.js'
 
 // ============================================================================
 // 配置
@@ -25,16 +25,55 @@ import { setupNodes, initControlPlane, joinCluster, getNodes } from '../server/k
 const TEMPLATE_ID = 'lt-hlk4agum'
 const REGION = 'ap-nanjing'
 const SSH_PRIVATE_KEY_PATH = join(process.env.HOME || '', '.ssh/id_rsa')
+const CLASH_SUBSCRIPTION_URL = process.env.CLASH_SUBSCRIPTION_URL || ''
+const LOGS_DIR = join(process.cwd(), 'logs')
 
-const CONTROL_PLANE_COUNT = 3  // control-plane 节点数量
-const WORKER_COUNT = 3          // worker 节点数量
+const MASTER_COUNT = 3  // master 节点数量（K3s 使用多 master 架构）
+
+// ============================================================================
+// 辅助函数
+// ============================================================================
+
+/**
+ * 将错误信息写入日志文件
+ *
+ * @param operation - 操作名称（如 initK3s, joinK3sMaster）
+ * @param serverName - 服务器名称
+ * @param serverIP - 服务器 IP
+ * @param output - 输出内容（包含 stdout 和 stderr）
+ */
+function logError(operation: string, serverName: string, serverIP: string, output: string) {
+  try {
+    // 确保 logs 目录存在
+    mkdirSync(LOGS_DIR, { recursive: true })
+
+    // 生成日志文件名（包含时间戳）
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const logFileName = `${operation}_${serverName}_${timestamp}.log`
+    const logFilePath = join(LOGS_DIR, logFileName)
+
+    // 写入日志
+    const logContent = [
+      `Operation: ${operation}`,
+      `Server: ${serverName} (${serverIP})`,
+      `Time: ${new Date().toISOString()}`,
+      '',
+      output,
+    ].join('\n')
+
+    writeFileSync(logFilePath, logContent, 'utf-8')
+    console.error(`  错误日志已保存到: ${logFilePath}`)
+  } catch (err) {
+    console.warn(`  无法保存错误日志: ${(err as Error).message}`)
+  }
+}
 
 // 从环境变量读取腾讯云密钥
 const tencentSecretId = process.env.tencentSecretId
 const tencentSecretKey = process.env.tencentSecretKey
 
-if (!tencentSecretId || !tencentSecretKey) {
-  console.error('错误: 请在 .env 文件中设置 tencentSecretId 和 tencentSecretKey')
+if (!tencentSecretId || !tencentSecretKey || !CLASH_SUBSCRIPTION_URL) {
+  console.error('错误: 请在 .env 文件中设置 tencentSecretId, tencentSecretKey, CLASH_SUBSCRIPTION_URL')
   process.exit(1)
 }
 
@@ -54,7 +93,7 @@ async function waitForServerReady(
   tencentCloud: TencentCloud,
   instanceId: string,
   maxAttempts: number = 60
-): Promise<any> {
+): Promise<ServerInfo> {
   console.log(`  等待服务器 ${instanceId} 就绪...`)
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -101,150 +140,150 @@ async function main() {
       region: REGION
     })
 
-    // 2. 创建所有节点
-    const totalCount = CONTROL_PLANE_COUNT + WORKER_COUNT
+    // 2. 创建所有 master 节点
     console.log('\n========================================')
-    console.log(`创建 ${totalCount} 个节点 (${CONTROL_PLANE_COUNT} control-plane + ${WORKER_COUNT} worker)`)
+    console.log(`创建 ${MASTER_COUNT} 个 master 节点`)
     console.log('========================================')
 
     const allIds = await tencentCloud.createServer({
       templateId: TEMPLATE_ID,
-      count: totalCount
+      count: MASTER_COUNT
     })
-
 
     // 3. 等待所有服务器就绪
     console.log('\n========================================')
     console.log('等待所有服务器就绪')
     console.log('========================================')
 
-    const allServers: any[] = []
+    const allServers: ServerInfo[] = []
     for (const id of allIds) {
       const server = await waitForServerReady(tencentCloud, id)
       allServers.push(server)
     }
 
-    // 分配 control-plane 和 worker
-    const controlPlaneServers = allServers.slice(0, CONTROL_PLANE_COUNT)
-    const workerServers = allServers.slice(CONTROL_PLANE_COUNT)
+    console.log('✓ 所有服务器已就绪')
 
-    // 5. 并行在所有节点上执行 setup
+    // 4. 在所有节点上安装 Clash 代理
+    // console.log('\n========================================')
+    // console.log('在所有节点上安装 Clash 代理')
+    // console.log('========================================')
+
+    // const clashPromises = allServers.map(async (server) => {
+    //   console.log(`  - 正在在 ${server.name} (${server.ip}) 上安装 Clash...`)
+    //   const result = await installClash({
+    //     serverIP: server.privateIp,
+    //     subscriptionURL: CLASH_SUBSCRIPTION_URL,
+    //     sshUser: 'ubuntu',
+    //     sshPubKey: privateKey
+    //   })
+
+    //   return {
+    //     server,
+    //     result
+    //   }
+    // })
+
+    // const clashResults = await Promise.all(clashPromises)
+
+    // // 检查安装结果
+    // const failedClash = clashResults.filter(({ result }) => !result.success)
+    // if (failedClash.length > 0) {
+    //   console.warn('部分节点 Clash 安装失败:')
+    //   failedClash.forEach(({ server, result }) => {
+    //     console.warn(`  ${server.name} (${server.ip}): ${result.message}`)
+    //   })
+    // } else {
+    //   console.log('✓ 所有节点 Clash 安装成功')
+    // }
+
+    // 5. 在第一个 master 节点上初始化 K3s 集群
     console.log('\n========================================')
-    console.log('并行在所有节点上执行 setup')
+    console.log('在第一个 master 节点上初始化 K3s 集群')
     console.log('========================================')
+    const firstMaster = allServers[0]
 
-    const sshConfigs: SSHConfig[] = allServers.map(server => ({
-      host: server.ip,
-      username: 'ubuntu',
-      privateKey
-    }))
+    console.log(`使用节点: ${firstMaster.name} (${firstMaster.ip})`)
 
-    // 并行执行 setup
-    const setupResults = await setupNodes(sshConfigs)
+    // 生成或获取 K3s token（可以使用预定义的 token 或者生成一个随机 token）
+    const k3sToken = process.env.K3S_TOKEN || 'K10' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
+    console.log(`使用 K3s token: ${k3sToken}`)
 
-    // 检查 setup 结果
-    const failedSetups = setupResults.filter(r => !r.success)
-    if (failedSetups.length > 0) {
-      console.error('部分节点 setup 失败:')
-      failedSetups.forEach(r => {
-        console.error(`  ${r.host}: ${r.error}`)
-      })
-      throw new Error(`${failedSetups.length} 个节点 setup 失败`)
-    }
-
-    console.log('✓ 所有节点 setup 完成')
-
-    // 6. 在第一个 control-plane 节点上初始化集群
-    console.log('\n========================================')
-    console.log('在第一个 control-plane 节点上初始化集群')
-    console.log('========================================')
-    const firstControlPlane = controlPlaneServers[0]
-    const sshConfig: SSHConfig = {
-      host: firstControlPlane.ip,
-      username: 'ubuntu',
-      privateKey
-    }
-
-    console.log(`使用节点: ${firstControlPlane.name} (${firstControlPlane.ip})`)
-    const initResult = await initControlPlane(sshConfig)
+    const initResult = await initK3s({
+      serverIP: firstMaster.ip,
+      k3sToken,
+      sshUser: 'ubuntu',
+      sshPubKey: privateKey
+    })
 
     if (!initResult.success) {
-      throw new Error(`集群初始化失败: ${initResult.error}`)
+      // 保存错误日志（包含 stdout 和 stderr）
+      const output = [
+        initResult.stdout ? `STDOUT:\n${initResult.stdout}` : '',
+        initResult.stderr ? `STDERR:\n${initResult.stderr}` : '',
+      ].filter(Boolean).join('\n\n')
+
+      if (output) {
+        logError('initK3s', firstMaster.name, firstMaster.ip, output)
+      } else {
+        console.warn('  没有输出内容可保存')
+      }
+
+      throw new Error(`K3s 集群初始化失败: ${initResult.message}`)
     }
 
-    console.log('✓ 集群初始化成功')
-    console.log(`Worker Join 命令: ${initResult.joinCommand}`)
-    console.log(`Control-plane Join 命令: ${initResult.controlPlaneJoinCommand}`)
+    console.log('✓ K3s 集群初始化成功')
 
-    // 7. 并行在其他节点上加入集群
+    // 5. 并行在其他 master 节点上加入集群
     console.log('\n========================================')
-    console.log('并行在其他节点上加入集群')
+    console.log('并行在其他 master 节点上加入集群')
     console.log('========================================')
 
-    // 分离其他 control-plane 节点和 worker 节点
-    const otherControlPlaneServers = controlPlaneServers.slice(1)
+    const otherMasters = allServers.slice(1)
+    console.log(`让 ${otherMasters.length} 个 master 节点加入集群...`)
 
-    // 准备其他 control-plane 节点的 SSH 配置
-    const controlPlaneConfigs: SSHConfig[] = otherControlPlaneServers.map(server => ({
-      host: server.ip,
-      username: 'ubuntu',
-      privateKey
-    }))
+    const joinPromises = otherMasters.map(async (server) => {
+      console.log(`  - 正在让 ${server.name} (${server.privateIp}) 加入集群...`)
+      const result = await joinK3sMaster({
+        serverIP: server.ip,
+        masterIP: firstMaster.privateIp,
+        k3sToken,
+        sshUser: 'ubuntu',
+        sshPubKey: privateKey
+      })
 
-    // 准备 worker 节点的 SSH 配置
-    const workerConfigs: SSHConfig[] = workerServers.map(server => ({
-      host: server.ip,
-      username: 'ubuntu',
-      privateKey
-    }))
-
-    // 并行加入集群
-    const allResults: any[] = []
-
-    // 7.1 其他 control-plane 节点加入集群
-    if (controlPlaneConfigs.length > 0 && initResult.controlPlaneJoinCommand) {
-      console.log(`\n让 ${controlPlaneConfigs.length} 个 control-plane 节点加入集群...`)
-      const controlPlaneResults = await joinCluster(
-        controlPlaneConfigs,
-        initResult.controlPlaneJoinCommand
-      )
-      allResults.push(...controlPlaneResults)
-
-      // 检查加入结果
-      const failedJoins = controlPlaneResults.filter((r: any) => !r.success)
-      if (failedJoins.length > 0) {
-        console.error('部分 control-plane 节点加入集群失败:')
-        failedJoins.forEach((r: any) => {
-          console.error(`  ${r.host}: ${r.error}`)
-        })
-        throw new Error(`${failedJoins.length} 个 control-plane 节点加入集群失败`)
+      return {
+        server,
+        result
       }
+    })
 
-      console.log('✓ 所有 control-plane 节点已加入集群')
+    const joinResults = await Promise.all(joinPromises)
+
+    // 检查加入结果
+    const failedJoins = joinResults.filter(({ result }) => !result.success)
+    if (failedJoins.length > 0) {
+      console.error('部分 master 节点加入集群失败:')
+      failedJoins.forEach(({ server, result }) => {
+        console.error(`  ${server.name} (${server.privateIp}): ${result.message}`)
+
+        // 保存错误日志（包含 stdout 和 stderr）
+        const output = [
+          result.stdout ? `STDOUT:\n${result.stdout}` : '',
+          result.stderr ? `STDERR:\n${result.stderr}` : '',
+        ].filter(Boolean).join('\n\n')
+
+        if (output) {
+          logError('joinK3sMaster', server.name, server.privateIp, output)
+        } else {
+          console.warn(`  ${server.name}: 没有输出内容可保存`)
+        }
+      })
+      throw new Error(`${failedJoins.length} 个 master 节点加入集群失败`)
     }
 
-    // 7.2 worker 节点加入集群
-    if (workerConfigs.length > 0 && initResult.joinCommand) {
-      console.log(`\n让 ${workerConfigs.length} 个 worker 节点加入集群...`)
-      const workerResults = await joinCluster(workerConfigs, initResult.joinCommand)
-      allResults.push(...workerResults)
+    console.log('✓ 所有 master 节点已加入集群')
 
-      // 检查加入结果
-      const failedJoins = workerResults.filter((r: any) => !r.success)
-      if (failedJoins.length > 0) {
-        console.error('部分 worker 节点加入集群失败:')
-        failedJoins.forEach((r: any) => {
-          console.error(`  ${r.host}: ${r.error}`)
-        })
-        throw new Error(`${failedJoins.length} 个 worker 节点加入集群失败`)
-      }
-
-      console.log('✓ 所有 worker 节点已加入集群')
-    }
-
-    console.log('\n✓ 所有节点已加入集群')
-
-    // 8. 查询集群节点状态
+    // 6. 查询集群节点状态
     console.log('\n========================================')
     console.log('查询集群节点状态')
     console.log('========================================')
@@ -253,29 +292,44 @@ async function main() {
     console.log('等待 30 秒让节点完全就绪...')
     await new Promise(resolve => setTimeout(resolve, 30000))
 
-    const nodes = await getNodes(initResult.kubeconfig!)
-    console.log(`\n集群共有 ${nodes.length} 个节点:`)
-    nodes.forEach((node, index) => {
-      console.log(`\n[${index + 1}] ${node.name}`)
-      console.log(`    状态: ${node.status}`)
-      console.log(`    角色: ${node.roles.join(', ')}`)
-      console.log(`    版本: ${node.version}`)
-      console.log(`    内部 IP: ${node.internalIP}`)
+    const nodesResult = await execRemoteCommand({
+      serverIP: firstMaster.privateIp,
+      command: 'sudo k3s kubectl get nodes -o wide',
+      sshUser: 'ubuntu',
+      sshPubKey: privateKey
     })
 
-    console.log('\n========================================')
-    console.log('✓ 集群创建完成')
-    console.log('========================================')
-    console.log(`Control-plane 节点: ${CONTROL_PLANE_COUNT}`)
-    console.log(`Worker 节点: ${WORKER_COUNT}`)
-    console.log(`总计: ${CONTROL_PLANE_COUNT + WORKER_COUNT} 个节点`)
+    if (nodesResult.success && nodesResult.stdout) {
+      console.log('\n集群节点状态:')
+      console.log(nodesResult.stdout)
+    } else {
+      console.warn('无法获取集群节点状态')
+    }
 
-  } catch (error: any) {
+    console.log('\n========================================')
+    console.log('✓ K3s 集群创建完成')
+    console.log('========================================')
+    console.log(`Master 节点: ${MASTER_COUNT}`)
+    console.log(`总计: ${MASTER_COUNT} 个节点`)
+
+    // 输出访问信息
+    console.log('\n访问信息:')
+    console.log(`  首个 master 节点 IP: ${firstMaster.ip}`)
+    console.log(`  Kubeconfig 路径: /etc/rancher/k3s/k3s.yaml`)
+    console.log(`  可以使用以下命令获取 kubeconfig:`)
+    console.log(`    ssh ubuntu@${firstMaster.ip} "sudo cat /etc/rancher/k3s/k3s.yaml"`)
+
+  } catch (error: unknown) {
     console.error('\n========================================')
     console.error('✗ 测试失败')
     console.error('========================================')
-    console.error(error.message)
-    console.error(error.stack)
+
+    if (error instanceof Error) {
+      console.error(error.message)
+      console.error(error.stack)
+    } else {
+      console.error('未知错误:', error)
+    }
     process.exit(1)
   }
 }

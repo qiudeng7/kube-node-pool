@@ -1,14 +1,81 @@
+/**
+ * K3s 集群管理模块
+ *
+ * 提供远程服务器 SSH 连接和脚本执行功能，用于自动化部署和管理 K3s 集群。
+ *
+ * @module server/kube
+ *
+ * @example
+ * ```typescript
+ * import { initK3s, joinK3sMaster } from './server/kube'
+ *
+ * // 初始化 K3s 集群
+ * await initK3s({
+ *   serverIP: '192.168.1.10',
+ *   k3sToken: 'K10...token',
+ *   sshUser: 'ubuntu',
+ *   sshPubKey: privateKey
+ * })
+ *
+ * // 加入 K3s 集群
+ * await joinK3sMaster({
+ *   serverIP: '192.168.1.11',
+ *   masterIP: '192.168.1.10',
+ *   k3sToken: 'K10...token',
+ *   sshUser: 'ubuntu',
+ *   sshPubKey: privateKey
+ * })
+ * ```
+ */
+
 import { Client } from 'ssh2'
 import { readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 
+// 获取当前文件所在目录的绝对路径
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
+// ============================================================================
+// 基础 SSH 操作函数
+// ============================================================================
+
 /**
- * 在远程服务器执行命令
- * @param params SSH连接参数和命令
- * @returns Promise<{ success: boolean; message: string; stdout?: string; stderr?: string }>
+ * 在远程服务器执行命令（带重试机制）
+ *
+ * 通过 SSH 连接到远程服务器并执行指定的 shell 命令，支持自动重试。
+ * 适用于执行简单的单行命令，如查询系统状态、操作文件等。
+ *
+ * @param params - SSH 连接和命令参数
+ * @param params.serverIP - 服务器 IP 地址
+ * @param params.command - 要执行的 shell 命令
+ * @param params.sshPort - SSH 端口，默认 22
+ * @param params.sshUser - SSH 用户名，默认 'ubuntu'
+ * @param params.sshPubKey - SSH 私钥内容（字符串）
+ * @param params.sshPubKeyPath - SSH 私钥文件路径
+ * @param params.sshPasswd - SSH 密码
+ * @param params.retries - 重试次数，默认 3 次
+ *
+ * @returns 执行结果
+ * @returns {boolean} success - 命令是否成功执行（退出码为 0）
+ * @returns {string} message - 执行结果描述
+ * @returns {string} [stdout] - 标准输出内容
+ * @returns {string} [stderr] - 错误输出内容
+ *
+ * @example
+ * ```typescript
+ * // 查询系统版本
+ * const result = await execRemoteCommand({
+ *   serverIP: '192.168.1.10',
+ *   command: 'cat /etc/os-release',
+ *   sshUser: 'ubuntu',
+ *   sshPubKey: privateKey
+ * })
+ *
+ * if (result.success) {
+ *   console.log(result.stdout)
+ * }
+ * ```
  */
 export async function execRemoteCommand(params: {
     serverIP: string,
@@ -17,13 +84,74 @@ export async function execRemoteCommand(params: {
     sshUser?: string,
     sshPubKey?: string,
     sshPubKeyPath?: string,
-    sshPasswd?: string
+    sshPasswd?: string,
+    retries?: number
 }): Promise<{ success: boolean; message: string; stdout?: string; stderr?: string }> {
     const {
         serverIP,
         command,
         sshPort = 22,
-        sshUser = 'root',
+        sshUser = 'ubuntu',
+        sshPubKey,
+        sshPubKeyPath,
+        sshPasswd,
+        retries = 3
+    } = params
+
+    let lastError: string = ''
+
+    // 循环重试
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        const result = await execCommandOnce({
+            serverIP,
+            command,
+            sshPort,
+            sshUser,
+            sshPubKey,
+            sshPubKeyPath,
+            sshPasswd
+        })
+
+        // 如果成功，直接返回结果
+        if (result.success) {
+            return result
+        }
+
+        lastError = result.message
+
+        // 如果还有重试次数，等待 2 秒后重试
+        if (attempt < retries) {
+            await new Promise(resolve => setTimeout(resolve, 2000))
+        }
+    }
+
+    // 所有重试都失败，返回错误信息
+    return {
+        success: false,
+        message: `命令执行失败（已重试 ${retries} 次）: ${lastError}`
+    }
+}
+
+/**
+ * 执行单次远程命令（内部函数）
+ *
+ * @internal
+ * 通过 SSH 执行单次命令，不包含重试逻辑。
+ */
+async function execCommandOnce(params: {
+    serverIP: string,
+    command: string,
+    sshPort: number,
+    sshUser: string,
+    sshPubKey?: string,
+    sshPubKeyPath?: string,
+    sshPasswd?: string
+}): Promise<{ success: boolean; message: string; stdout?: string; stderr?: string }> {
+    const {
+        serverIP,
+        command,
+        sshPort,
+        sshUser,
         sshPubKey,
         sshPubKeyPath,
         sshPasswd
@@ -32,7 +160,9 @@ export async function execRemoteCommand(params: {
     return new Promise((resolve) => {
         const conn = new Client()
 
+        // SSH 连接成功回调
         conn.on('ready', () => {
+            // 执行命令
             conn.exec(command, (err, stream) => {
                 if (err) {
                     conn.end()
@@ -46,6 +176,7 @@ export async function execRemoteCommand(params: {
                 let stdout = ''
                 let stderr = ''
 
+                // 命令执行结束回调
                 stream.on('close', (code: number) => {
                     conn.end()
                     resolve({
@@ -56,16 +187,19 @@ export async function execRemoteCommand(params: {
                     })
                 })
 
+                // 收集错误输出
                 stream.stderr.on('data', (data: Buffer) => {
                     stderr += data.toString()
                 })
 
+                // 收集标准输出
                 stream.stdout.on('data', (data: Buffer) => {
                     stdout += data.toString()
                 })
             })
         })
 
+        // SSH 连接错误回调
         conn.on('error', (err) => {
             resolve({
                 success: false,
@@ -78,9 +212,11 @@ export async function execRemoteCommand(params: {
             host: serverIP,
             port: sshPort,
             username: sshUser,
+            readyTimeout: 60000,      // SSH 连接超时：60 秒
+            keepaliveInterval: 10000,  // 保持连接间隔：10 秒
         }
 
-        // 优先使用密钥认证
+        // 优先使用密钥认证（按优先级：sshPubKey > sshPubKeyPath > sshPasswd）
         if (sshPubKey) {
             connConfig.privateKey = sshPubKey
         } else if (sshPubKeyPath) {
@@ -103,14 +239,48 @@ export async function execRemoteCommand(params: {
             return
         }
 
+        // 建立 SSH 连接
         conn.connect(connConfig)
     })
 }
 
+// ============================================================================
+// 远程脚本执行函数
+// ============================================================================
+
 /**
- * SSH连接并执行远程脚本的通用函数
- * @param params SSH连接参数和脚本信息
- * @returns Promise<{ success: boolean; message: string; stdout?: string; stderr?: string }>
+ * SSH连接并执行远程脚本的通用函数（带重试机制）
+ *
+ * 读取本地脚本文件内容，通过 SSH 在远程服务器上执行。
+ * 适用于执行复杂的多行脚本，如安装软件、配置系统等。
+ *
+ * @param params - SSH 连接和脚本参数
+ * @param params.serverIP - 服务器 IP 地址
+ * @param params.scriptPath - 本地脚本文件的绝对路径
+ * @param params.args - 传递给脚本的参数数组
+ * @param params.sshPort - SSH 端口，默认 22
+ * @param params.sshUser - SSH 用户名，默认 'ubuntu'
+ * @param params.sshPubKey - SSH 私钥内容（字符串）
+ * @param params.sshPubKeyPath - SSH 私钥文件路径
+ * @param params.sshPasswd - SSH 密码
+ * @param params.retries - 重试次数，默认 3 次
+ *
+ * @returns 执行结果
+ * @returns {boolean} success - 脚本是否成功执行（退出码为 0）
+ * @returns {string} message - 执行结果描述
+ * @returns {string} [stdout] - 标准输出内容
+ * @returns {string} [stderr] - 错误输出内容
+ *
+ * @example
+ * ```typescript
+ * const result = await runRemoteScript({
+ *   serverIP: '192.168.1.10',
+ *   scriptPath: '/path/to/script.sh',
+ *   args: ['arg1', 'arg2'],
+ *   sshUser: 'ubuntu',
+ *   sshPubKey: privateKey
+ * })
+ * ```
  */
 export async function runRemoteScript(params: {
     serverIP: string,
@@ -120,31 +290,106 @@ export async function runRemoteScript(params: {
     sshPubKeyPath?: string,
     sshPasswd?: string,
     scriptPath: string,
-    args?: string[]
+    args?: string[],
+    retries?: number
 }): Promise<{ success: boolean; message: string; stdout?: string; stderr?: string }> {
     const {
         serverIP,
         sshPort = 22,
-        sshUser = 'root',
+        sshUser = 'ubuntu',
         sshPubKey,
         sshPubKeyPath,
         sshPasswd,
         scriptPath,
-        args = []
+        args = [],
+        retries = 3
+    } = params
+
+    let lastError: string = ''
+
+    // 循环重试
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        const result = await runScriptOnce({
+            serverIP,
+            sshPort,
+            sshUser,
+            sshPubKey,
+            sshPubKeyPath,
+            sshPasswd,
+            scriptPath,
+            args
+        })
+
+        // 如果成功，直接返回结果
+        if (result.success) {
+            return result
+        }
+
+        lastError = result.message
+
+        // 如果还有重试次数，等待 2 秒后重试
+        if (attempt < retries) {
+            await new Promise(resolve => setTimeout(resolve, 2000))
+        }
+    }
+
+    // 所有重试都失败，返回错误信息
+    return {
+        success: false,
+        message: `脚本执行失败（已重试 ${retries} 次）: ${lastError}`
+    }
+}
+
+/**
+ * 执行单次远程脚本（内部函数）
+ *
+ * @internal
+ * 读取脚本文件内容并通过 SSH 执行，不包含重试逻辑。
+ */
+async function runScriptOnce(params: {
+    serverIP: string,
+    sshPort: number,
+    sshUser: string,
+    sshPubKey?: string,
+    sshPubKeyPath?: string,
+    sshPasswd?: string,
+    scriptPath: string,
+    args: string[]
+}): Promise<{ success: boolean; message: string; stdout?: string; stderr?: string }> {
+    const {
+        serverIP,
+        sshPort,
+        sshUser,
+        sshPubKey,
+        sshPubKeyPath,
+        sshPasswd,
+        scriptPath,
+        args
     } = params
 
     return new Promise((resolve) => {
         const conn = new Client()
 
+        // SSH 连接成功回调
         conn.on('ready', () => {
-            // 读取脚本内容
+            // 读取本地脚本文件内容
             const scriptContent = readFileSync(scriptPath, 'utf-8')
 
-            // 构建完整的命令（脚本内容 + 参数）
+            // 构建完整的命令（使用交互式 bash）
+            // 设置 -e 遇到错误立即退出
+            // 设置 -x 打印调试信息
             const argsStr = args.map(arg => `'${arg}'`).join(' ')
-            const command = `${scriptContent} ${argsStr}`
+            const command = `bash -exc '
+set -e
+${scriptContent.split('\n').map(line => '  ' + line).join('\n')}
+' ${argsStr}`
 
-            conn.exec(command, (err, stream) => {
+            console.error(`[DEBUG ${serverIP}] Executing interactive bash script...`)
+
+            // 使用 shell 模式执行（类似交互式终端）
+            conn.exec(command, {
+                pty: true  // 使用伪终端，提供完整的交互式环境
+            }, (err, stream) => {
                 if (err) {
                     conn.end()
                     resolve({
@@ -157,8 +402,43 @@ export async function runRemoteScript(params: {
                 let stdout = ''
                 let stderr = ''
 
-                stream.on('close', (code: number) => {
+                // 收集标准输出
+                stream.stdout.on('data', (data: Buffer) => {
+                    const text = data.toString()
+                    stdout += text
+                    // 实时输出以便调试
+                    // process.stderr.write(`[STDOUT] ${text}`)
+                })
+
+                // 收集错误输出
+                stream.stderr.on('data', (data: Buffer) => {
+                    const text = data.toString()
+                    stderr += text
+                    // 实时输出以便调试
+                    // process.stderr.write(`[STDERR] ${text}`)
+                })
+
+                console.error(`[DEBUG ${serverIP}] Script execution started...`)
+
+                // 设置超时（5 分钟），防止长时间运行的命令卡住
+                const timeout = setTimeout(() => {
+                    console.error(`[DEBUG ${serverIP}] Command timeout after 5 minutes`)
                     conn.end()
+                    resolve({
+                        success: false,
+                        message: '命令执行超时（5分钟）',
+                        stdout,
+                        stderr: 'Command timeout'
+                    })
+                }, 5 * 60 * 1000)
+
+                // 命令执行结束回调
+                stream.on('close', (code: number) => {
+                    clearTimeout(timeout)
+                    conn.end()
+                    console.error(`[DEBUG ${serverIP}] Exit code: ${code}, stdout: ${stdout.length} bytes, stderr: ${stderr.length} bytes`)
+                    if (stdout) console.error(`[DEBUG ${serverIP}] stdout: ${stdout.substring(0, 500)}`)
+                    if (stderr) console.error(`[DEBUG ${serverIP}] stderr: ${stderr}`)
                     resolve({
                         success: code === 0,
                         message: code === 0 ? '脚本执行成功' : `脚本执行失败，退出码: ${code}`,
@@ -166,17 +446,10 @@ export async function runRemoteScript(params: {
                         stderr
                     })
                 })
-
-                stream.stderr.on('data', (data: Buffer) => {
-                    stderr += data.toString()
-                })
-
-                stream.stdout.on('data', (data: Buffer) => {
-                    stdout += data.toString()
-                })
             })
         })
 
+        // SSH 连接错误回调
         conn.on('error', (err) => {
             resolve({
                 success: false,
@@ -189,9 +462,11 @@ export async function runRemoteScript(params: {
             host: serverIP,
             port: sshPort,
             username: sshUser,
+            readyTimeout: 60000,      // SSH 连接超时：60 秒
+            keepaliveInterval: 10000,  // 保持连接间隔：10 秒
         }
 
-        // 优先使用密钥认证
+        // 优先使用密钥认证（按优先级：sshPubKey > sshPubKeyPath > sshPasswd）
         if (sshPubKey) {
             connConfig.privateKey = sshPubKey
         } else if (sshPubKeyPath) {
@@ -214,14 +489,40 @@ export async function runRemoteScript(params: {
             return
         }
 
+        // 建立 SSH 连接
         conn.connect(connConfig)
     })
 }
 
+// ============================================================================
+// K3s 集群管理函数
+// ============================================================================
+
 /**
- * 在远程服务器安装clash
- * @param installClashParams
- * @returns Promise<{ success: boolean; message: string; stdout?: string; stderr?: string }>
+ * 在远程服务器安装 Clash 代理
+ *
+ * 使用提供的订阅 URL 在远程服务器上安装并配置 Clash 代理服务。
+ *
+ * @param params - 安装参数
+ * @param params.subscriptionURL - Clash 订阅链接
+ * @param params.serverIP - 服务器 IP 地址
+ * @param params.sshPort - SSH 端口，默认 22
+ * @param params.sshUser - SSH 用户名，默认 'ubuntu'
+ * @param params.sshPubKey - SSH 私钥内容（字符串）
+ * @param params.sshPubKeyPath - SSH 私钥文件路径
+ * @param params.sshPasswd - SSH 密码
+ *
+ * @returns 执行结果
+ *
+ * @example
+ * ```typescript
+ * const result = await installClash({
+ *   serverIP: '192.168.1.10',
+ *   subscriptionURL: 'https://example.com/config.yaml',
+ *   sshUser: 'ubuntu',
+ *   sshPubKey: privateKey
+ * })
+ * ```
  */
 export async function installClash(installClashParams: {
     subscriptionURL: string,
@@ -248,13 +549,35 @@ export async function installClash(installClashParams: {
 }
 
 /**
- * 在远程服务器初始化k3s集群（master节点）
- * @param initK3sParams
- * @returns Promise<{ success: boolean; message: string; stdout?: string; stderr?: string }>
+ * 在远程服务器初始化 K3s 集群（首个 master 节点）
+ *
+ * 在指定的服务器上初始化 K3s 集群的第一个 master 节点。
+ * 使用提供的 token 作为集群认证令牌。
+ *
+ * @param params - 初始化参数
+ * @param params.serverIP - 服务器 IP 地址
+ * @param params.k3sToken - K3s 集群认证令牌
+ * @param params.sshPort - SSH 端口，默认 22
+ * @param params.sshUser - SSH 用户名，默认 'ubuntu'
+ * @param params.sshPubKey - SSH 私钥内容（字符串）
+ * @param params.sshPubKeyPath - SSH 私钥文件路径
+ * @param params.sshPasswd - SSH 密码
+ *
+ * @returns 执行结果
+ *
+ * @example
+ * ```typescript
+ * const result = await initK3s({
+ *   serverIP: '192.168.1.10',
+ *   k3sToken: 'K10abcdef1234567890',
+ *   sshUser: 'ubuntu',
+ *   sshPubKey: privateKey
+ * })
+ * ```
  */
 export async function initK3s(initK3sParams: {
     serverIP: string,
-    k3sToken?: string,
+    k3sToken: string,
     sshPort?: number,
     sshUser?: string,
     sshPubKey?: string,
@@ -272,19 +595,43 @@ export async function initK3s(initK3sParams: {
         sshPubKeyPath,
         sshPasswd,
         scriptPath,
-        args: k3sToken ? [k3sToken] : []
+        args: [k3sToken]
     })
 }
 
 /**
- * 在远程服务器加入k3s集群（作为master节点）
- * @param joinK3sMasterParams
- * @returns Promise<{ success: boolean; message: string; stdout?: string; stderr?: string }>
+ * 在远程服务器加入 K3s 集群（作为额外的 master 节点）
+ *
+ * 将指定的服务器加入到现有的 K3s 集群中，作为一个新的 master 节点。
+ * 需要提供首个 master 节点的 IP 地址和集群的认证令牌。
+ *
+ * @param params - 加入集群参数
+ * @param params.serverIP - 要加入的服务器 IP 地址
+ * @param params.masterIP - 首个 master 节点的 IP 地址
+ * @param params.k3sToken - K3s 集群认证令牌（必须与首个节点使用的 token 一致）
+ * @param params.sshPort - SSH 端口，默认 22
+ * @param params.sshUser - SSH 用户名，默认 'ubuntu'
+ * @param params.sshPubKey - SSH 私钥内容（字符串）
+ * @param params.sshPubKeyPath - SSH 私钥文件路径
+ * @param params.sshPasswd - SSH 密码
+ *
+ * @returns 执行结果
+ *
+ * @example
+ * ```typescript
+ * const result = await joinK3sMaster({
+ *   serverIP: '192.168.1.11',
+ *   masterIP: '192.168.1.10',
+ *   k3sToken: 'K10abcdef1234567890',
+ *   sshUser: 'ubuntu',
+ *   sshPubKey: privateKey
+ * })
+ * ```
  */
 export async function joinK3sMaster(joinK3sMasterParams: {
     serverIP: string,
     masterIP: string,
-    k3sToken?: string,
+    k3sToken: string,
     sshPort?: number,
     sshUser?: string,
     sshPubKey?: string,
@@ -302,6 +649,6 @@ export async function joinK3sMaster(joinK3sMasterParams: {
         sshPubKeyPath,
         sshPasswd,
         scriptPath,
-        args: k3sToken ? [k3sToken, masterIP] : [masterIP]
+        args: [k3sToken, masterIP]
     })
 }
