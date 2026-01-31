@@ -24,7 +24,7 @@ while [ $WAIT_TIME -lt $MAX_WAIT ]; do
 
       if [ -n "$NODES" ]; then
         # 检查是否有至少一个 Ready 状态的节点
-        READY_COUNT=$(sudo k3s kubectl get nodes -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -c "true" || echo "0")
+        READY_COUNT=$(sudo k3s kubectl get nodes -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -c "True" || echo "0")
 
         if [ "$READY_COUNT" -gt 0 ]; then
           echo "✓ K3s service is ready"
