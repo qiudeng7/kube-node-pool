@@ -30,7 +30,7 @@
 
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { createSSHClient, type SSHConfig, type ExecutionOptions } from './ssh.js'
+import { createSSHClient, type SSHConfig, type ExecutionOptions } from '../ssh.js'
 
 // 获取当前文件所在目录的绝对路径
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -178,5 +178,4 @@ export async function joinK3sMaster(params: {
 }
 
 // 导出类型，供外部使用
-export type { SSHConfig, ExecutionOptions } from './ssh.js'
-export type { SSHClient } from './ssh.js'
+export type { SSHConfig, ExecutionOptions, SSHClient } from '../ssh.js'

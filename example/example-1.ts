@@ -16,7 +16,8 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { TencentCloud } from '../server/cloudVendor/tencentCloud/index.js'
 import type { ServerInfo } from '../server/cloudVendor/interface.js'
-import { initK3s, joinK3sMaster, execRemoteCommand } from '../server/kube/index.js'
+import { initK3s, joinK3sMaster } from '../server/kube/index.js'
+import { createSSHClient } from '../server/ssh.js'
 
 // ============================================================================
 // 配置
@@ -292,12 +293,13 @@ async function main() {
     console.log('等待 30 秒让节点完全就绪...')
     await new Promise(resolve => setTimeout(resolve, 30000))
 
-    const nodesResult = await execRemoteCommand({
+    const ssh = createSSHClient({
       serverIP: firstMaster.privateIp,
-      command: 'sudo k3s kubectl get nodes -o wide',
       sshUser: 'ubuntu',
       sshPubKey: privateKey
     })
+
+    const nodesResult = await ssh.exec('sudo k3s kubectl get nodes -o wide')
 
     if (nodesResult.success && nodesResult.stdout) {
       console.log('\n集群节点状态:')
