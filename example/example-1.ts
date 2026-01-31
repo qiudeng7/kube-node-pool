@@ -36,14 +36,36 @@ const MASTER_COUNT = 3  // master 节点数量（K3s 使用多 master 架构）
 // ============================================================================
 
 /**
- * 将错误信息写入日志文件
+ * 移除 ANSI 转义序列（终端颜色代码等）
+ *
+ * @param text - 包含 ANSI 转义序列的文本
+ * @returns 清理后的文本
+ */
+function stripAnsiCodes(text: string): string {
+  // 移除所有 ANSI 转义序列
+  return text.replace(/\x1b\[[0-9;]*m/g, '')
+}
+
+/**
+ * 将执行信息写入日志文件
  *
  * @param operation - 操作名称（如 initK3s, joinK3sMaster）
  * @param serverName - 服务器名称
  * @param serverIP - 服务器 IP
- * @param output - 输出内容（包含 stdout 和 stderr）
+ * @param command - 执行的命令（可选）
+ * @param retries - 重试次数（可选）
+ * @param stdout - 标准输出
+ * @param stderr - 错误输出
  */
-function logError(operation: string, serverName: string, serverIP: string, output: string) {
+function logExecution(
+  operation: string,
+  serverName: string,
+  serverIP: string,
+  command?: string,
+  retries?: number,
+  stdout?: string,
+  stderr?: string
+) {
   try {
     // 确保 logs 目录存在
     mkdirSync(LOGS_DIR, { recursive: true })
@@ -53,19 +75,57 @@ function logError(operation: string, serverName: string, serverIP: string, outpu
     const logFileName = `${operation}_${serverName}_${timestamp}.log`
     const logFilePath = join(LOGS_DIR, logFileName)
 
+    // 清理输出中的 ANSI 转义序列
+    const cleanStdout = stdout ? stripAnsiCodes(stdout) : ''
+    const cleanStderr = stderr ? stripAnsiCodes(stderr) : ''
+
     // 写入日志
     const logContent = [
       `Operation: ${operation}`,
       `Server: ${serverName} (${serverIP})`,
       `Time: ${new Date().toISOString()}`,
+      command ? `Command: ${command}` : '',
+      retries !== undefined ? `Retries: ${retries}` : '',
       '',
-      output,
-    ].join('\n')
+      cleanStdout ? `STDOUT:\n${cleanStdout}` : '',
+      cleanStderr ? `STDERR:\n${cleanStderr}` : '',
+    ].filter(Boolean).join('\n')
 
     writeFileSync(logFilePath, logContent, 'utf-8')
-    console.error(`  错误日志已保存到: ${logFilePath}`)
+    console.log(`  日志已保存到: ${logFilePath}`)
   } catch (err) {
-    console.warn(`  无法保存错误日志: ${(err as Error).message}`)
+    console.warn(`  无法保存日志: ${(err as Error).message}`)
+  }
+}
+
+/**
+ * 创建日志回调函数
+ *
+ * @param operation - 操作名称
+ * @param serverName - 服务器名称
+ * @param serverIP - 服务器 IP
+ * @returns 包含 onStdout、onStderr、setCommand、setRetries 和 saveLog 的对象
+ */
+function createLogCallbacks(operation: string, serverName: string, serverIP: string) {
+  let stdout = ''
+  let stderr = ''
+  let command: string | undefined
+  let retries: number | undefined
+
+  return {
+    onStdout: (data: string) => {
+      stdout += data
+    },
+    onStderr: (data: string) => {
+      stderr += data
+    },
+    setCommand: (cmd: string) => {
+      command = cmd
+    },
+    setRetries: (count: number) => {
+      retries = count
+    },
+    saveLog: () => logExecution(operation, serverName, serverIP, command, retries, stdout, stderr)
   }
 }
 
@@ -209,26 +269,27 @@ async function main() {
     const k3sToken = process.env.K3S_TOKEN || 'K10' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
     console.log(`使用 K3s token: ${k3sToken}`)
 
+    // 创建日志回调
+    const initLog = createLogCallbacks('initK3s', firstMaster.name, firstMaster.ip)
+    initLog.setCommand(`bash k3s_init.sh ${k3sToken}`)
+    initLog.setRetries(3)
+
     const initResult = await initK3s({
       serverIP: firstMaster.ip,
       k3sToken,
       sshUser: 'ubuntu',
-      sshPubKey: privateKey
+      sshPubKey: privateKey,
+      options: {
+        retries: 3,
+        onStdout: initLog.onStdout,
+        onStderr: initLog.onStderr
+      }
     })
 
+    // 保存执行日志
+    initLog.saveLog()
+
     if (!initResult.success) {
-      // 保存错误日志（包含 stdout 和 stderr）
-      const output = [
-        initResult.stdout ? `STDOUT:\n${initResult.stdout}` : '',
-        initResult.stderr ? `STDERR:\n${initResult.stderr}` : '',
-      ].filter(Boolean).join('\n\n')
-
-      if (output) {
-        logError('initK3s', firstMaster.name, firstMaster.ip, output)
-      } else {
-        console.warn('  没有输出内容可保存')
-      }
-
       throw new Error(`K3s 集群初始化失败: ${initResult.message}`)
     }
 
@@ -244,13 +305,27 @@ async function main() {
 
     const joinPromises = otherMasters.map(async (server) => {
       console.log(`  - 正在让 ${server.name} (${server.privateIp}) 加入集群...`)
+
+      // 创建日志回调
+      const joinLog = createLogCallbacks('joinK3sMaster', server.name, server.privateIp)
+      joinLog.setCommand(`bash k3s_join_master.sh ${k3sToken} ${firstMaster.privateIp}`)
+      joinLog.setRetries(3)
+
       const result = await joinK3sMaster({
         serverIP: server.ip,
         masterIP: firstMaster.privateIp,
         k3sToken,
         sshUser: 'ubuntu',
-        sshPubKey: privateKey
+        sshPubKey: privateKey,
+        options: {
+          retries: 3,
+          onStdout: joinLog.onStdout,
+          onStderr: joinLog.onStderr
+        }
       })
+
+      // 保存执行日志
+      joinLog.saveLog()
 
       return {
         server,
@@ -266,18 +341,6 @@ async function main() {
       console.error('部分 master 节点加入集群失败:')
       failedJoins.forEach(({ server, result }) => {
         console.error(`  ${server.name} (${server.privateIp}): ${result.message}`)
-
-        // 保存错误日志（包含 stdout 和 stderr）
-        const output = [
-          result.stdout ? `STDOUT:\n${result.stdout}` : '',
-          result.stderr ? `STDERR:\n${result.stderr}` : '',
-        ].filter(Boolean).join('\n\n')
-
-        if (output) {
-          logError('joinK3sMaster', server.name, server.privateIp, output)
-        } else {
-          console.warn(`  ${server.name}: 没有输出内容可保存`)
-        }
       })
       throw new Error(`${failedJoins.length} 个 master 节点加入集群失败`)
     }
@@ -288,10 +351,6 @@ async function main() {
     console.log('\n========================================')
     console.log('查询集群节点状态')
     console.log('========================================')
-
-    // 等待一段时间让节点完全就绪
-    console.log('等待 30 秒让节点完全就绪...')
-    await new Promise(resolve => setTimeout(resolve, 30000))
 
     const ssh = createSSHClient({
       serverIP: firstMaster.privateIp,
@@ -304,8 +363,21 @@ async function main() {
     if (nodesResult.success && nodesResult.stdout) {
       console.log('\n集群节点状态:')
       console.log(nodesResult.stdout)
+
+      // 解析节点数量
+      const lines = nodesResult.stdout.trim().split('\n')
+      // 第一行是表头，从第二行开始计算节点数
+      const nodeCount = lines.length - 1
+      console.log(`\n检测到 ${nodeCount} 个节点`)
+
+      if (nodeCount === MASTER_COUNT) {
+        console.log('✓ 节点数量符合预期')
+      } else {
+        console.warn(`⚠ 节点数量不符合预期: 期望 ${MASTER_COUNT}，实际 ${nodeCount}`)
+      }
     } else {
       console.warn('无法获取集群节点状态')
+      console.warn(`错误: ${nodesResult.message}`)
     }
 
     console.log('\n========================================')
@@ -313,13 +385,7 @@ async function main() {
     console.log('========================================')
     console.log(`Master 节点: ${MASTER_COUNT}`)
     console.log(`总计: ${MASTER_COUNT} 个节点`)
-
-    // 输出访问信息
-    console.log('\n访问信息:')
-    console.log(`  首个 master 节点 IP: ${firstMaster.ip}`)
-    console.log(`  Kubeconfig 路径: /etc/rancher/k3s/k3s.yaml`)
-    console.log(`  可以使用以下命令获取 kubeconfig:`)
-    console.log(`    ssh ubuntu@${firstMaster.ip} "sudo cat /etc/rancher/k3s/k3s.yaml"`)
+    console.log(`首个 master 节点 IP: ${firstMaster.ip}`)
 
   } catch (error: unknown) {
     console.error('\n========================================')
