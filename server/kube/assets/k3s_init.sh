@@ -17,25 +17,36 @@ WAIT_TIME=0
 while [ $WAIT_TIME -lt $MAX_WAIT ]; do
   # 检查服务是否运行
   if systemctl is-active --quiet k3s.service; then
+    echo "  [1/4] ✓ k3s.service is running"
     # 检查 API 端口是否开放
     if curl -sfk https://localhost:6443/healthz &>/dev/null; then
+      echo "  [2/4] ✓ API server (port 6443) is responding"
       # 检查是否可以获取节点信息
       NODES=$(sudo k3s kubectl get nodes -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)
 
       if [ -n "$NODES" ]; then
+        echo "  [3/4] ✓ Node resources found: $NODES"
         # 检查是否有至少一个 Ready 状态的节点
         READY_COUNT=$(sudo k3s kubectl get nodes -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -c "True" || echo "0")
 
         if [ "$READY_COUNT" -gt 0 ]; then
+          echo "  [4/4] ✓ $READY_COUNT node(s) in Ready state"
+          echo ""
           echo "✓ K3s service is ready"
           echo "Cluster nodes:"
           sudo k3s kubectl get nodes
           exit 0
         else
-          echo "  Nodes found but not ready yet..."
+          echo "  [4/4] ✗ No Ready nodes yet (found nodes but not ready)"
         fi
+      else
+        echo "  [3/4] ✗ No node resources found yet"
       fi
+    else
+      echo "  [2/4] ✗ API server not responding yet"
     fi
+  else
+    echo "  [1/4] ✗ k3s.service not running yet"
   fi
 
   WAIT_TIME=$((WAIT_TIME + 5))
