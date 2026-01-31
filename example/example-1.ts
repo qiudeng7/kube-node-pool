@@ -23,13 +23,25 @@ import { createSSHClient } from '../server/ssh.js'
 // 配置
 // ============================================================================
 
-const TEMPLATE_ID = 'lt-hlk4agum'
-const REGION = 'ap-nanjing'
-const SSH_PRIVATE_KEY_PATH = join(process.env.HOME || '', '.ssh/id_rsa')
-const CLASH_SUBSCRIPTION_URL = process.env.CLASH_SUBSCRIPTION_URL || ''
-const LOGS_DIR = join(process.cwd(), 'logs')
+const CONFIG = {
+  // 腾讯云配置
+  TEMPLATE_ID: 'lt-hlk4agum',
+  REGION: 'ap-nanjing',
 
-const MASTER_COUNT = 3  // master 节点数量（K3s 使用多 master 架构）
+  // K3s 集群配置
+  K3S_TOKEN: '123456',
+  MASTER_COUNT: 3,  // master 节点数量
+
+  // SSH 配置
+  SSH_PRIVATE_KEY_PATH: join(process.env.HOME || '', '.ssh/id_rsa'),
+  SSH_USER: 'ubuntu',
+
+  // Clash 配置
+  CLASH_SUBSCRIPTION_URL: process.env.CLASH_SUBSCRIPTION_URL || '',
+
+  // 日志配置
+  LOGS_DIR: join(process.cwd(), 'logs'),
+}
 
 // ============================================================================
 // 辅助函数
@@ -68,12 +80,12 @@ function logExecution(
 ) {
   try {
     // 确保 logs 目录存在
-    mkdirSync(LOGS_DIR, { recursive: true })
+    mkdirSync(CONFIG.LOGS_DIR, { recursive: true })
 
     // 生成日志文件名（包含时间戳）
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
     const logFileName = `${operation}_${serverName}_${timestamp}.log`
-    const logFilePath = join(LOGS_DIR, logFileName)
+    const logFilePath = join(CONFIG.LOGS_DIR, logFileName)
 
     // 清理输出中的 ANSI 转义序列
     const cleanStdout = stdout ? stripAnsiCodes(stdout) : ''
@@ -133,7 +145,7 @@ function createLogCallbacks(operation: string, serverName: string, serverIP: str
 const tencentSecretId = process.env.tencentSecretId
 const tencentSecretKey = process.env.tencentSecretKey
 
-if (!tencentSecretId || !tencentSecretKey || !CLASH_SUBSCRIPTION_URL) {
+if (!tencentSecretId || !tencentSecretKey || !CONFIG.CLASH_SUBSCRIPTION_URL) {
   console.error('错误: 请在 .env 文件中设置 tencentSecretId, tencentSecretKey, CLASH_SUBSCRIPTION_URL')
   process.exit(1)
 }
@@ -187,8 +199,8 @@ async function main() {
     console.log('========================================')
     console.log('读取 SSH 私钥')
     console.log('========================================')
-    console.log(`SSH 私钥路径: ${SSH_PRIVATE_KEY_PATH}`)
-    const privateKey = readFileSync(SSH_PRIVATE_KEY_PATH, 'utf-8')
+    console.log(`SSH 私钥路径: ${CONFIG.SSH_PRIVATE_KEY_PATH}`)
+    const privateKey = readFileSync(CONFIG.SSH_PRIVATE_KEY_PATH, 'utf-8')
 
     // 1. 初始化腾讯云客户端
     console.log('\n========================================')
@@ -198,17 +210,17 @@ async function main() {
     tencentCloud.setConfig({
       secretId: tencentSecretId!,
       secretKey: tencentSecretKey!,
-      region: REGION
+      region: CONFIG.REGION
     })
 
     // 2. 创建所有 master 节点
     console.log('\n========================================')
-    console.log(`创建 ${MASTER_COUNT} 个 master 节点`)
+    console.log(`创建 ${CONFIG.MASTER_COUNT} 个 master 节点`)
     console.log('========================================')
 
     const allIds = await tencentCloud.createServer({
-      templateId: TEMPLATE_ID,
-      count: MASTER_COUNT
+      templateId: CONFIG.TEMPLATE_ID,
+      count: CONFIG.MASTER_COUNT
     })
 
     // 3. 等待所有服务器就绪
@@ -265,19 +277,17 @@ async function main() {
 
     console.log(`使用节点: ${firstMaster.name} (${firstMaster.ip})`)
 
-    // 生成或获取 K3s token（可以使用预定义的 token 或者生成一个随机 token）
-    const k3sToken = process.env.K3S_TOKEN || 'K10' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
-    console.log(`使用 K3s token: ${k3sToken}`)
+    console.log(`使用 K3s token: ${CONFIG.K3S_TOKEN}`)
 
     // 创建日志回调
     const initLog = createLogCallbacks('initK3s', firstMaster.name, firstMaster.ip)
-    initLog.setCommand(`bash k3s_init.sh ${k3sToken}`)
+    initLog.setCommand(`bash k3s_init.sh ${CONFIG.K3S_TOKEN}`)
     initLog.setRetries(3)
 
     const initResult = await initK3s({
       serverIP: firstMaster.ip,
-      k3sToken,
-      sshUser: 'ubuntu',
+      k3sToken: CONFIG.K3S_TOKEN,
+      sshUser: CONFIG.SSH_USER,
       sshPubKey: privateKey,
       options: {
         retries: 3,
@@ -308,14 +318,14 @@ async function main() {
 
       // 创建日志回调
       const joinLog = createLogCallbacks('joinK3sMaster', server.name, server.privateIp)
-      joinLog.setCommand(`bash k3s_join_master.sh ${k3sToken} ${firstMaster.privateIp}`)
+      joinLog.setCommand(`bash k3s_join_master.sh ${CONFIG.K3S_TOKEN} ${firstMaster.privateIp}`)
       joinLog.setRetries(3)
 
       const result = await joinK3sMaster({
         serverIP: server.ip,
         masterIP: firstMaster.privateIp,
-        k3sToken,
-        sshUser: 'ubuntu',
+        k3sToken: CONFIG.K3S_TOKEN,
+        sshUser: CONFIG.SSH_USER,
         sshPubKey: privateKey,
         options: {
           retries: 3,
@@ -354,7 +364,7 @@ async function main() {
 
     const ssh = createSSHClient({
       serverIP: firstMaster.privateIp,
-      sshUser: 'ubuntu',
+      sshUser: CONFIG.SSH_USER,
       sshPubKey: privateKey
     })
 
@@ -370,10 +380,10 @@ async function main() {
       const nodeCount = lines.length - 1
       console.log(`\n检测到 ${nodeCount} 个节点`)
 
-      if (nodeCount === MASTER_COUNT) {
+      if (nodeCount === CONFIG.MASTER_COUNT) {
         console.log('✓ 节点数量符合预期')
       } else {
-        console.warn(`⚠ 节点数量不符合预期: 期望 ${MASTER_COUNT}，实际 ${nodeCount}`)
+        console.warn(`⚠ 节点数量不符合预期: 期望 ${CONFIG.MASTER_COUNT}，实际 ${nodeCount}`)
       }
     } else {
       console.warn('无法获取集群节点状态')
@@ -383,8 +393,8 @@ async function main() {
     console.log('\n========================================')
     console.log('✓ K3s 集群创建完成')
     console.log('========================================')
-    console.log(`Master 节点: ${MASTER_COUNT}`)
-    console.log(`总计: ${MASTER_COUNT} 个节点`)
+    console.log(`Master 节点: ${CONFIG.MASTER_COUNT}`)
+    console.log(`总计: ${CONFIG.MASTER_COUNT} 个节点`)
     console.log(`首个 master 节点 IP: ${firstMaster.ip}`)
 
   } catch (error: unknown) {
